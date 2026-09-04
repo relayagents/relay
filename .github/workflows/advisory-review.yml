@@ -1,0 +1,28 @@
+# Advisory PR reviews from the lab's reusable reviewer (agentic-learning-ai-lab/autoresearch).
+# Never approves, never fails CI, never reviews bot-authored or fork PRs. Docs: autoresearch/docs/install.md.
+#
+# Prerequisites before flipping the repository variable REVIEWER_ENABLED to "true":
+#   1. The reusable workflow must be reachable from this repo. GitHub only lets a repo call reusable
+#      workflows from a PRIVATE repo inside the same organization, and autoresearch is private under a
+#      different org. Either make autoresearch public, or mirror its two reusable workflow files into
+#      a repo in the relayagents org and point `uses:` there.
+#   2. Repository secret ANTHROPIC_REVIEWER_KEY (a key used only for reviews), and, while autoresearch
+#      is private, AUTORESEARCH_DEPLOY_KEY (read-only deploy key so the reviewer code can be checked out).
+name: advisory-review
+on:
+  pull_request_target:
+    types: [opened, reopened, labeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  advisory:
+    if: vars.REVIEWER_ENABLED == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'autoresearch:review')
+    uses: agentic-learning-ai-lab/autoresearch/.github/workflows/advisory-review-agent.yml@main
+    with:
+      bot_login: relay-bot   # no such account yet; PRs here are human-authored, so everything is reviewed
+    secrets:
+      anthropic_reviewer_key: ${{ secrets.ANTHROPIC_REVIEWER_KEY }}
+      checkout_ssh_key: ${{ secrets.AUTORESEARCH_DEPLOY_KEY }}
