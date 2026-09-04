@@ -35,7 +35,8 @@ class Transcript(BaseModel):
 
 
 class MemoryHit(BaseModel):
-    """A search result with provenance so the caller can cite it."""
+    """A search result with provenance and the event's structural links, so an agent can follow
+    them (thread, item, superseded decision, source segments) without a graph (ADR-0005)."""
 
     text: str
     score: float = Field(ge=0)
@@ -46,6 +47,59 @@ class MemoryHit(BaseModel):
     ref: str | None = Field(
         default=None, description="Backend-specific reference (edge uuid, event id)."
     )
+    event_type: str | None = None
+    actor: str | None = None
+    thread_id: str | None = None
+    related_ids: list[str] = Field(
+        default_factory=list,
+        description="item/decision/question ids, supersedes, parent events, source segments.",
+    )
+
+    @classmethod
+    def from_event(
+        cls, event: Event, *, score: float, kind: Literal["vector", "event"]
+    ) -> MemoryHit:
+        from relayagents.core.store import event_summary
+
+        p = event.payload.model_dump()
+        keys = (
+            "item_id",
+            "decision_id",
+            "question_id",
+            "supersedes",
+            "task_id",
+            "approval_id",
+            "meeting_id",
+        )
+        related = [v for k in keys if (v := p.get(k))]
+        related += event.provenance.parent_event_ids + event.provenance.segment_ids
+        return cls(
+            text=event_summary(event),
+            score=round(score, 3),
+            kind=kind,
+            event_ids=[event.id],
+            valid_from=event.ts,
+            ref=event.id,
+            event_type=event.type,
+            actor=event.actor.id,
+            thread_id=event.thread_id,
+            related_ids=related,
+        )
+
+
+class RecentDecision(BaseModel):
+    decision_id: str
+    topic: str | None
+    statement: str
+
+
+class ExtractionContext(BaseModel):
+    """What the extractor knows about the team before reading a transcript: existing topics (so it
+    reuses names instead of inventing near-duplicates) and recent decisions (so it can say which one
+    a new decision replaces). This is where the graph's two real jobs now live (ADR-0005)."""
+
+    known_topics: list[str] = Field(default_factory=list)
+    recent_decisions: list[RecentDecision] = Field(default_factory=list)
 
 
 class ChatMessageRef(BaseModel):
@@ -213,5 +267,10 @@ class Extractor(Protocol):
     """Transcript → typed events. Reference: Pydantic AI structured extraction."""
 
     async def extract(
-        self, transcript: Transcript, *, meeting_id: str, participants: Sequence[str]
+        self,
+        transcript: Transcript,
+        *,
+        meeting_id: str,
+        participants: Sequence[str],
+        context: ExtractionContext | None = None,
     ) -> AsyncIterator[Event]: ...

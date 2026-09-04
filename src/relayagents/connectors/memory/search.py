@@ -14,7 +14,7 @@ from typing import Any
 import structlog
 
 from relayagents.core.protocols import MemoryHit
-from relayagents.core.store import EventStore, event_summary
+from relayagents.core.store import EventStore
 
 log = structlog.get_logger()
 
@@ -29,16 +29,7 @@ async def semantic_search(
             vec = await services.embedder.embed_query(query)
             async with services.db.session() as session:
                 for event, score in await EventStore(session).vector_search(vec, limit=limit):
-                    hits.append(
-                        MemoryHit(
-                            text=event_summary(event),
-                            score=round(score, 3),
-                            kind="vector",
-                            event_ids=[event.id],
-                            valid_from=event.ts,
-                            ref=event.id,
-                        )
-                    )
+                    hits.append(MemoryHit.from_event(event, score=score, kind="vector"))
         except Exception as exc:
             log.warning("recall.vector_failed", error=str(exc))
     if "graph" in kinds and services.memory is not None:

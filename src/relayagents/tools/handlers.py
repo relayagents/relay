@@ -29,7 +29,7 @@ from relayagents.core.projections import apply as project
 from relayagents.core.projections import list_decisions, list_items
 from relayagents.core.protocols import MemoryHit
 from relayagents.core.redact import redact
-from relayagents.core.store import EventStore, event_summary, parse_since
+from relayagents.core.store import EventStore, parse_since
 from relayagents.tools.context import ToolContext
 from relayagents.tools.schemas import (
     ActionItem,
@@ -73,16 +73,7 @@ async def recall(ctx: ToolContext, inp: RecallInput) -> RecallOutput:
             for event, score in await EventStore(session).keyword_search(
                 inp.query, limit=inp.limit, types=None
             ):
-                hits.append(
-                    MemoryHit(
-                        text=event_summary(event),
-                        score=round(score, 3),
-                        kind="event",
-                        event_ids=[event.id],
-                        valid_from=event.ts,
-                        ref=event.id,
-                    )
-                )
+                hits.append(MemoryHit.from_event(event, score=score, kind="event"))
     semantic_kinds = sorted(kinds & {"vector", "graph"})
     if semantic_kinds and ctx.services.semantic is not None:
         try:

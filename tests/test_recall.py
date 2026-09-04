@@ -229,3 +229,48 @@ async def test_rebuild_clears_and_reindexes_and_fails_loudly(services) -> None: 
     services.memory = FakeMemory(fail=True)
     with pytest.raises(RuntimeError, match="graph backend down"):
         await rebuild_graph({"services": services})
+
+
+async def test_recall_hits_carry_structural_links(client: httpx.AsyncClient, team) -> None:  # type: ignore[no-untyped-def]
+    tok = team["ada"]["human"]
+    await client.post(
+        "/v1/events",
+        json={
+            "payload": {
+                "type": "action_item.created",
+                "item_id": "item_z",
+                "title": "Ship the reranker cache",
+                "assignee": "grace",
+            },
+            "thread_id": "mtg_9",
+        },
+        headers=auth(tok),
+    )
+    await client.post(
+        f"{TOOLS_PREFIX}/report",
+        json={
+            "text": "reranker cache merged",
+            "item_id": "item_z",
+            "link": "https://example.com/pr/9",
+            "close_item": True,
+        },
+        headers=auth(team["grace"]["agent"]),
+    )
+    hits = (
+        await client.post(
+            f"{TOOLS_PREFIX}/recall",
+            json={"query": "reranker cache", "kinds": ["event"]},
+            headers=auth(tok),
+        )
+    ).json()["hits"]
+    by_type = {h["event_type"]: h for h in hits}
+    assert (
+        by_type["action_item.created"]["thread_id"] == "mtg_9"
+        and "item_z" in by_type["action_item.created"]["related_ids"]
+    )
+    closed = by_type["action_item.closed"]
+    assert (
+        closed["actor"] == "grace.hermes"
+        and "item_z" in closed["related_ids"]
+        and any(r.startswith("evt_") for r in closed["related_ids"])
+    )

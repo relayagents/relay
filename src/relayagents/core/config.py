@@ -38,8 +38,9 @@ class Settings(BaseSettings):
     )
     token_ttl_days: int = 365
 
-    # Team memory (graph). Backend is pluggable; see docs/protocols.md.
-    memory_backend: Literal["graphiti-kuzu", "none"] = "graphiti-kuzu"
+    # Team memory beyond the event log, projections and pgvector. A knowledge graph is opt-in
+    # (ADR-0005): "graphiti-kuzu" needs `--extra graph` and a team model key.
+    memory_backend: Literal["none", "graphiti-kuzu"] = "none"
     graph_path: Path = Path("/var/lib/relay/graph.kuzu")
 
     # Team model key: used ONLY by workers for extraction, digests, and embeddings.

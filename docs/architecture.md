@@ -9,7 +9,7 @@ topology, and the two vertical slices.
 | Service | Role | Image |
 |---|---|---|
 | `relay-api` | FastAPI: REST, the Relay MCP server (streamable HTTP, bearer tokens issued by Relay), the A2A broker, the Slack Socket Mode client | `ghcr.io/relayagents/relay` |
-| `relay-workers` | arq on Redis: transcript extraction, PM dispatch, graph indexing, daily digest | same image, `workers` command |
+| `relay-workers` | arq on Redis: transcript extraction, PM dispatch, embeddings, daily digest (graph indexing only when the opt-in graph is on) | same image, `workers` command |
 | `relay-ingest` | arq on the `relay:ingest` queue: WhisperX + pyannote. CPU on the node, or GPU elsewhere | `ghcr.io/relayagents/relay-ingest` |
 | `postgres` | Postgres 16 + pgvector. The `events` table is the source of truth | `pgvector/pgvector:pg16` |
 | `redis` | Job queue | `redis:7` |
@@ -25,7 +25,7 @@ tools/       registry (the one definition) → mcp.py, rest.py, cli.py generator
 api/         app factory, auth, routes/, a2a_broker/, slack/, mcp_server (via tools/mcp.py)
 workers/     extraction, pm, digest, standup, jobs, main (arq)
 ingest/      whisperx_transcriber, fixture, worker (arq, separate queue)
-connectors/  slack, github (gh), coding_agents (CLI in sandbox), hermes (provisioning), workspace (MCP client), memory (Graphiti+Kuzu)
+connectors/  slack, github (gh), coding_agents (CLI in sandbox), hermes (provisioning), workspace (MCP client), memory (opt-in Graphiti graph, ADR-0005)
 cli/         `relay` (typer) and the HTTP client
 ```
 
@@ -35,9 +35,9 @@ cli/         `relay` (typer) and the HTTP client
 2. **Extraction.** `extract_meeting` appends `transcript.segment` events, runs the extractor (Pydantic AI structured output, or the deterministic keyword extractor), and appends `decision.made`, `action_item.created`, `question.opened` events, each with `provenance.segment_ids`. Projections (`action_items`, `decisions`) update in the same transaction.
 3. **PM.** The same job posts a summary to the team Slack channel and sends one A2A task per assigned item to the assignee's agent through the broker. Relay's PM has no credentials of its own.
 4. **Agents.** Each Hermes container long-polls `GET /a2a/inbox`. For an action item it typically calls `request_approval` (the human clicks in Slack), runs `gh issue create` with the human's token, then invokes a coding agent in the sandbox. The coding agent talks to Relay over MCP (`my_items`, `report`).
-5. **Memory.** Workers embed events (pgvector) and index them into Graphiti (Kuzu file in the workers' own volume). `recall` runs the keyword leg in relay-api and asks the workers for the vector and graph legs through the `semantic_recall` job, so the team model key never leaves the workers. Hits carry event ids.
+5. **Memory.** Workers embed events with text (pgvector). `recall` runs the keyword leg in relay-api and asks the workers for the vector leg through the `semantic_recall` job, so the team model key never leaves the workers. Every hit carries the event's type, actor, thread, and linked ids (item, decision, supersedes, source segments), which is how an agent follows structure without a graph. The extractor reuses known topic names and marks which decision a new one supersedes, using the projections as its memory (ADR-0005). A knowledge graph (Graphiti) remains an opt-in `MemoryStore`.
 6. **Daily updates.** The Hermes bridge runs `relay standup draft` at the user's time, lets Hermes reword it without adding facts, and submits. Mode `draft` DMs a Block Kit draft; `auto` posts with attribution; `off` does nothing. A worker posts the team digest after the window.
-7. **Replay.** `docker compose exec relay-workers relay replay --rebuild-graph --rebuild-projections` truncates derived stores (projections, embeddings, graph) and re-applies every event. It runs in the workers container because that is where the team key and the graph volume live.
+7. **Replay.** `docker compose exec relay-workers relay replay --rebuild-graph --rebuild-projections` truncates derived stores (projections, embeddings, and the graph if enabled) and re-applies every event. It runs in the workers container because that is where the team key lives.
 
 ## Deployment topology
 

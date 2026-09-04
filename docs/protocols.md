@@ -4,9 +4,9 @@ Every external system sits behind a `typing.Protocol` in `src/relayagents/core/p
 
 | Protocol | Reference implementation | Alternatives that fit |
 |---|---|---|
-| `MemoryStore` — `index(events)`, `search(query)`, `reset()`, `close()` | `connectors/memory.GraphitiKuzuMemory` (Graphiti on embedded Kuzu) | Graphiti on FalkorDB Lite or Neo4j; a pure pgvector store; `NullMemory` |
+| `MemoryStore` — `index(events)`, `search(query)`, `reset()`, `close()` | **opt-in**, off by default (ADR-0005): `connectors/memory.GraphitiKuzuMemory` | Graphiti on FalkorDB Lite (preferred if ever enabled) or Neo4j |
 | `Transcriber` — `transcribe(path, meeting_id, language, diarize)` | `ingest/whisperx_transcriber.WhisperXTranscriber` (+ pyannote) | faster-whisper without alignment; a hosted ASR; `FixtureTranscriber` for tests |
-| `Extractor` — `extract(transcript, meeting_id, participants)` | `workers/extraction.LLMExtractor` (Pydantic AI structured output) | `KeywordExtractor` (deterministic, offline) |
+| `Extractor` — `extract(transcript, meeting_id, participants, context)` | `workers/extraction.LLMExtractor` (Pydantic AI structured output; reuses known topics and sets `supersedes` from the `ExtractionContext`) | `KeywordExtractor` (deterministic, offline) |
 | `OfficeSuite` — `search_documents`, `read_document`, `upcoming_meetings` | `connectors/workspace.WorkspaceMCP` (MCP client to `workspace-mcp`, per-user OAuth 2.1) | Microsoft 365 via a Graph MCP server (v2) |
 | `ChatApp` — `post`, `dm`, `update` | `connectors/slack.SlackChatApp` (one app, Socket Mode) | Discord, Mattermost; `RecordingChatApp` for tests |
 | `IssueTracker` — `create_issue`, `list_issues` | `connectors/github.GhIssueTracker` (`gh` with `GH_TOKEN` per user) | Linear, GitLab |
