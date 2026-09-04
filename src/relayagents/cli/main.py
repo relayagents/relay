@@ -250,12 +250,26 @@ def add_user(
     no_container: Annotated[
         bool, typer.Option(help="Register only; do not start a Hermes container")
     ] = False,
+    reissue: Annotated[bool, typer.Option(help="Mint new tokens for an existing user")] = False,
+    agents_dir: Annotated[
+        Path, typer.Option(help="Where per-user agent env files are written (host side)")
+    ] = Path("var/agents"),
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print machine-readable JSON (used by scripts/add-user.sh)"),
+    ] = False,
 ) -> None:
-    """Provision a teammate: user, tokens, Hermes container, AgentCard, and their MCP config."""
+    """Provision a teammate: user, tokens, AgentCard, and (with Docker on this machine) a Hermes container.
+
+    Inside the relay-api container there is no Docker; run scripts/add-user.sh on the node instead.
+    """
+    from fastapi import HTTPException
+
     from relayagents.api.app import build_services
     from relayagents.api.routes.users import AddUserIn, create_user_with_tokens
     from relayagents.connectors.hermes import HermesUserAgent
     from relayagents.core.config import get_settings
+    from relayagents.core.events import Actor
 
     settings = get_settings()
 
@@ -263,28 +277,46 @@ def add_user(
         services = build_services(settings)
         if settings.is_sqlite:
             await services.db.create_all()
-        out = await create_user_with_tokens(
-            services,
-            AddUserIn(
-                id=user_id,
-                display_name=name or user_id,
-                email=email,
-                slack_user_id=slack_user_id,
-                github_login=github_login,
-                timezone=timezone,
-                is_admin=admin,
-            ),
-        )
-        hermes = HermesUserAgent(settings.data_dir, docker=not no_container)
-        prov = await hermes.provision(
-            user_id, relay_url=settings.public_url, relay_token=out.agent_token
-        )
-        await services.db.dispose()
+        try:
+            out = await create_user_with_tokens(
+                services,
+                AddUserIn(
+                    id=user_id,
+                    display_name=name or user_id,
+                    email=email,
+                    slack_user_id=slack_user_id,
+                    github_login=github_login,
+                    timezone=timezone,
+                    is_admin=admin,
+                    reissue=reissue,
+                ),
+                issued_by=Actor.system("relay.cli.admin"),
+            )
+        except HTTPException as exc:
+            typer.secho(f"error: {exc.detail}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(1) from exc
+        finally:
+            await services.db.dispose()
+        prov: dict[str, Any] = {"started": False}
+        if not no_container:
+            prov = await HermesUserAgent(agents_dir).provision(
+                user_id, relay_url=settings.public_url, relay_token=out.agent_token
+            )
+        if json_output:
+            _echo_json({**out.model_dump(), "provision": prov})
+            return
         typer.echo(f"user {out.user.id} created. Agent {out.agent_id} registered.")
+        if no_container:
+            typer.echo(
+                "hermes: not started (--no-container). On the node: scripts/add-user.sh " + user_id
+            )
+        elif prov["started"]:
+            typer.echo(f"hermes: started {prov['container']} (credentials in {prov['env_file']})")
+        else:
+            typer.echo(f"hermes: {prov.get('hint')}\n  {prov.get('command')}")
         typer.echo(
-            f"hermes: {'started ' + prov['container'] if prov['started'] else prov.get('hint', 'not started')}"
+            "\n== give this to the person (human token; used once by `relay login --token`) =="
         )
-        typer.echo("\n== give this to the person (human token; used by `relay login --token`) ==")
         typer.echo(out.human_token)
         typer.echo(
             "\n== MCP config for their coding agent (or run `relay setup-agent <agent>` after login) =="
@@ -306,8 +338,12 @@ def approve_login(device_code: str) -> None:
     from relayagents.core.config import get_settings
 
     async def run() -> None:
+        from relayagents.core.events import Actor
+
         services = build_services(get_settings())
-        row = await approve_device(services, device_code, approved=True)
+        row = await approve_device(
+            services, device_code, approved=True, admin=Actor.system("relay.cli.admin")
+        )
         await services.db.dispose()
         typer.echo(f"login {row.user_code}: {row.status}")
 
@@ -459,7 +495,7 @@ def replay(
         rebuild_graph = rebuild_projections = True
 
     async def run() -> None:
-        services = build_services(get_settings())
+        services = build_services(get_settings(), role="worker")
         if rebuild_projections:
             async with services.db.session() as session:
                 n = await projections.rebuild(session, EventStore(session))
@@ -468,9 +504,9 @@ def replay(
         if rebuild_graph:
             n = await rebuild_graph_job({"services": services})
             typer.echo(
-                f"graph rebuilt from {n} events"
-                if services.memory
-                else "no memory backend configured; graph skipped"
+                f"graph and embeddings rebuilt from {n} events"
+                if (services.memory or services.embedder)
+                else "no memory backend or embedding model configured; nothing to rebuild"
             )
         await services.db.dispose()
 

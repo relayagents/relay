@@ -8,8 +8,9 @@ docker compose version >/dev/null || { echo "docker compose v2 is required"; exi
 
 if [ ! -f .env ]; then
   cp .env.example .env
-  pw=$(openssl rand -hex 24); pepper=$(openssl rand -hex 32)
-  sed -i.bak "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=${pw}/; s/^RELAY_TOKEN_PEPPER=.*/RELAY_TOKEN_PEPPER=${pepper}/" .env && rm -f .env.bak
+  pg=$(openssl rand -hex 24); rd=$(openssl rand -hex 24); pepper=$(openssl rand -hex 32)
+  sed -i.bak "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=${pg}/; s/^REDIS_PASSWORD=.*/REDIS_PASSWORD=${rd}/; s/^RELAY_TOKEN_PEPPER=.*/RELAY_TOKEN_PEPPER=${pepper}/" .env && rm -f .env.bak
+  chmod 600 .env
   echo "wrote .env with generated secrets; edit RELAY_HOSTNAME / Slack / model keys, then re-run."
   exit 0
 fi
@@ -22,12 +23,12 @@ for _ in $(seq 1 60); do
   echo -n "."; sleep 2
 done
 
-admin="${1:-${USER:-admin}}"
-echo "creating admin user '${admin}' (no Hermes container for the admin by default)..."
+admin="${1:-admin}"
+echo "creating admin user '${admin}' (no Hermes container for the admin)..."
 docker compose exec -T relay-api relay add-user "${admin}" --name "${admin}" --admin --no-container || true
 echo
 echo "next:"
 echo "  relay login --url \$(grep ^RELAY_PUBLIC_URL .env | cut -d= -f2) --token <human token printed above>"
-echo "  relay add-user <teammate>            # on the node, per teammate"
+echo "  scripts/add-user.sh <teammate>       # on the node, per teammate (user, tokens, AgentCard, Hermes container)"
 echo "  relay setup-agent claude-code        # on each laptop"
 echo "  relay meeting upload --transcript fixtures/transcript_sample.json --skip-asr --participants ada,grace,linus"

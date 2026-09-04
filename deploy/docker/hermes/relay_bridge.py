@@ -56,11 +56,11 @@ def run_hermes(prompt: str) -> tuple[int, str]:
 
 def handle_task(task: dict) -> None:
     task_id = task["id"]
-    text = "\n".join(
-        p.get("text", "")
-        for m in task.get("history", [])
-        for p in m.get("parts", [])
-        if p.get("text")
+    # Label every message with its side so a later "user" message cannot pose as the original ask.
+    text = "\n\n".join(
+        f"[{m.get('role', 'user')} message {i + 1}]\n"
+        + "\n".join(p.get("text", "") for p in m.get("parts", []) if p.get("text"))
+        for i, m in enumerate(task.get("history", []))
     )
     log("task.start", task_id=task_id)
     client.post(f"/a2a/tasks/{task_id}", json={"state": "working"})

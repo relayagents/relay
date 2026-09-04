@@ -3,6 +3,11 @@
 {$RELAY_HOSTNAME:localhost} {
 	encode gzip
 
+	# Uploads are capped here and again in relay-api (RELAY_MAX_UPLOAD_MB); keep the two in sync.
+	request_body {
+		max_size {$RELAY_MAX_UPLOAD_MB:512}MB
+	}
+
 	handle_path /workspace-mcp/* {
 		reverse_proxy workspace-mcp:8000
 	}

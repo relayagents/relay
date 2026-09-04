@@ -11,9 +11,9 @@ git clone https://github.com/relayagents/relay && cd relay
 ./scripts/bootstrap.sh            # writes .env with generated secrets
 $EDITOR .env                      # hostname, Slack tokens, team model key (optional)
 ./scripts/bootstrap.sh            # docker compose up -d --build, waits for /health, creates the admin
-pipx install relayagents          # the `relay` CLI on your laptop (or: uv tool install relayagents)
+uv tool install git+https://github.com/relayagents/relay   # the `relay` CLI on your laptop (PyPI release pending)
 relay login --url https://relay.example.dev --token <printed above>
-relay add-user grace              # on the node: user, tokens, Hermes container, AgentCard
+scripts/add-user.sh grace         # on the node: user, tokens, AgentCard, and a Hermes container
 relay setup-agent claude-code     # points your coding agent at Relay's MCP server
 relay meeting upload --transcript fixtures/transcript_sample.json --skip-asr --participants ada,grace,linus
 relay my-items                    # ...and `relay recall "embedding cache"`, `relay decisions`

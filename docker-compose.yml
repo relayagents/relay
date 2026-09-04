@@ -1,34 +1,40 @@
-# Relay node. `cp .env.example .env`, fill it in, then `docker compose up -d`.
+# Relay node. `./scripts/bootstrap.sh` writes .env with generated secrets; then `docker compose up -d`.
 name: relay
 
+# Settings every Relay service shares. No model keys here: those go to relay-workers only.
 x-relay-env: &relay-env
   RELAY_PUBLIC_URL: ${RELAY_PUBLIC_URL:-https://${RELAY_HOSTNAME:-localhost}}
   RELAY_TEAM_NAME: ${RELAY_TEAM_NAME:-relay}
   RELAY_ENVIRONMENT: ${RELAY_ENVIRONMENT:-prod}
   RELAY_LOG_LEVEL: ${RELAY_LOG_LEVEL:-INFO}
-  RELAY_DATABASE_URL: postgresql+asyncpg://relay:${POSTGRES_PASSWORD:-relay}@postgres:5432/relay
-  RELAY_REDIS_URL: redis://redis:6379/0
+  RELAY_DATABASE_URL: postgresql+asyncpg://relay:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/relay
+  RELAY_REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
   RELAY_DATA_DIR: /var/lib/relay
   RELAY_TOKEN_PEPPER: ${RELAY_TOKEN_PEPPER:-}
-  RELAY_MEMORY_BACKEND: ${RELAY_MEMORY_BACKEND:-graphiti-kuzu}
-  RELAY_GRAPH_PATH: /var/lib/relay/graph.kuzu
-  RELAY_EXTRACTION_MODEL: ${RELAY_EXTRACTION_MODEL:-keyword}
-  RELAY_EMBEDDING_MODEL: ${RELAY_EMBEDDING_MODEL:-openai:text-embedding-3-small}
+  RELAY_TOKEN_TTL_DAYS: ${RELAY_TOKEN_TTL_DAYS:-365}
+  RELAY_MAX_UPLOAD_MB: ${RELAY_MAX_UPLOAD_MB:-512}
   RELAY_SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
-  RELAY_SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
   RELAY_SLACK_TEAM_CHANNEL: ${SLACK_TEAM_CHANNEL:-}
   RELAY_WORKSPACE_MCP_URL: http://workspace-mcp:8000/mcp
   RELAY_SANDBOX_IMAGE: ${RELAY_SANDBOX_IMAGE:-ghcr.io/relayagents/relay-sandbox:latest}
-  # Team model key: used ONLY by workers (extraction, digests, graph). Never by user agents.
+
+# The team model key. Extraction, embeddings, digests, graph: workers only.
+x-team-keys: &team-keys
   OPENAI_API_KEY: ${TEAM_OPENAI_API_KEY:-}
   ANTHROPIC_API_KEY: ${TEAM_ANTHROPIC_API_KEY:-}
+  RELAY_MEMORY_BACKEND: ${RELAY_MEMORY_BACKEND:-graphiti-kuzu}
+  RELAY_GRAPH_PATH: /var/lib/relay/graph/graph.kuzu
+  RELAY_EXTRACTION_MODEL: ${RELAY_EXTRACTION_MODEL:-keyword}
+  RELAY_EMBEDDING_MODEL: ${RELAY_EMBEDDING_MODEL:-openai:text-embedding-3-small}
+  RELAY_DIGEST_HOUR_UTC: ${RELAY_DIGEST_HOUR_UTC:-17}
+  RELAY_DIGEST_MINUTE_UTC: ${RELAY_DIGEST_MINUTE_UTC:-0}
 
 services:
   postgres:
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: relay
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-relay}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: relay
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -43,13 +49,15 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--save", "60", "1", "--appendonly", "yes"]
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --save 60 1 --appendonly yes"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
     volumes:
       - redisdata:/data
     ports:
       - "${RELAY_BIND_IP:-127.0.0.1}:6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -61,10 +69,11 @@ services:
       context: .
       dockerfile: deploy/docker/relay/Dockerfile
     command: ["api"]
-    environment: *relay-env
+    environment:
+      <<: *relay-env
+      RELAY_SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}   # Socket Mode connection lives in the API only
     volumes:
       - relaydata:/var/lib/relay
-      - /var/run/docker.sock:/var/run/docker.sock:ro   # `relay add-user` starts per-user Hermes containers
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -77,15 +86,18 @@ services:
       context: .
       dockerfile: deploy/docker/relay/Dockerfile
     command: ["workers"]
-    environment: *relay-env
+    environment:
+      <<: [*relay-env, *team-keys]
     volumes:
       - relaydata:/var/lib/relay
+      - graphdata:/var/lib/relay/graph     # the derived graph; workers only
     depends_on:
       relay-api: { condition: service_healthy }
     restart: unless-stopped
 
   relay-ingest:
     # CPU fallback on the node. For a GPU box elsewhere on the tailnet, run docker-compose.gpu.yml there instead.
+    # Gets only what transcription needs: no Slack tokens, no model keys.
     image: ${RELAY_INGEST_IMAGE:-ghcr.io/relayagents/relay-ingest:latest}
     build:
       context: .
@@ -94,7 +106,10 @@ services:
         TORCH_INDEX: https://download.pytorch.org/whl/cpu
     command: ["ingest"]
     environment:
-      <<: *relay-env
+      RELAY_DATABASE_URL: postgresql+asyncpg://relay:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/relay
+      RELAY_REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
+      RELAY_DATA_DIR: /var/lib/relay
+      RELAY_LOG_LEVEL: ${RELAY_LOG_LEVEL:-INFO}
       RELAY_TRANSCRIBER: ${RELAY_TRANSCRIBER:-whisperx}
       RELAY_WHISPERX_MODEL: ${RELAY_WHISPERX_MODEL:-small}
       RELAY_WHISPERX_DEVICE: cpu
@@ -124,6 +139,7 @@ services:
     image: caddy:2-alpine
     environment:
       RELAY_HOSTNAME: ${RELAY_HOSTNAME:-localhost}
+      RELAY_MAX_UPLOAD_MB: ${RELAY_MAX_UPLOAD_MB:-512}
     ports:
       - "80:80"
       - "443:443"
@@ -138,7 +154,8 @@ services:
 volumes:
   pgdata:
   redisdata:
-  relaydata:
+  relaydata:     # meetings (audio + transcripts); shared by api, workers, ingest
+  graphdata:     # derived graph; workers only
   workspacedata:
   caddydata:
   caddyconfig:
