@@ -1,9 +1,10 @@
 # Optional GPU worker. Run this on the machine with the GPU (joined to the tailnet):
-#   RELAY_DATABASE_URL=postgresql+asyncpg://relay:<pw>@<node-tailscale-ip>:5432/relay \
-#   RELAY_REDIS_URL=redis://<node-tailscale-ip>:6379/0 \
+#   RELAY_DATABASE_URL=postgresql+asyncpg://relay:<postgres pw>@<node-tailscale-ip>:5432/relay \
+#   RELAY_REDIS_URL=redis://:<redis pw>@<node-tailscale-ip>:6379/0 \
 #   docker compose -f docker-compose.gpu.yml up -d
 # It consumes the same `relay:ingest` queue as the CPU fallback on the node; stop the node's
 # relay-ingest (`docker compose stop relay-ingest`) if you want all jobs on the GPU.
+# Postgres and Redis on the node must bind to the Tailscale IP (RELAY_BIND_IP) and are password-protected.
 name: relay-gpu
 
 services:
