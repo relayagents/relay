@@ -246,11 +246,13 @@ def add_user(
     slack_user_id: Annotated[str | None, typer.Option()] = None,
     github_login: Annotated[str | None, typer.Option()] = None,
     timezone: Annotated[str, typer.Option()] = "UTC",
-    admin: Annotated[bool, typer.Option(help="Make this user an admin")] = False,
+    admin: Annotated[bool, typer.Option("--admin", help="Make this user an admin")] = False,
     no_container: Annotated[
-        bool, typer.Option(help="Register only; do not start a Hermes container")
+        bool, typer.Option("--no-container", help="Register only; do not start a Hermes container")
     ] = False,
-    reissue: Annotated[bool, typer.Option(help="Mint new tokens for an existing user")] = False,
+    reissue: Annotated[
+        bool, typer.Option("--reissue", help="Mint new tokens for an existing user")
+    ] = False,
     agents_dir: Annotated[
         Path, typer.Option(help="Where per-user agent env files are written (host side)")
     ] = Path("var/agents"),
