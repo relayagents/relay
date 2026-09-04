@@ -1,0 +1,54 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen --extra graph
+      - run: uv run ruff check src tests
+      - run: uv run ruff format --check src tests
+      - run: uv run pytest -q
+      - name: alembic migration applies (sqlite)
+        run: RELAY_DATABASE_URL=sqlite+aiosqlite:///ci.db uv run alembic upgrade head
+
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: { POSTGRES_USER: relay, POSTGRES_PASSWORD: relay, POSTGRES_DB: relay }
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U relay" --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen
+      - name: migrations apply on Postgres + pgvector
+        run: RELAY_DATABASE_URL=postgresql+asyncpg://relay:relay@localhost:5432/relay uv run alembic upgrade head
+
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: build relay image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/relay/Dockerfile
+          push: false
+          tags: ghcr.io/relayagents/relay:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: compose config is valid
+        run: cp .env.example .env && docker compose config -q
