@@ -13,7 +13,16 @@ Relay's rule: **agents act under their human's own tokens, external writes need 
 | Team model key | workers only | Relay extraction/embeddings | `.env` (`TEAM_*_API_KEY`) |
 | Slack tokens | `relay-api` | the Relay app | `.env` |
 
-Tokens are opaque (`rly_...`), stored as SHA-256 with an optional pepper, expire after `RELAY_TOKEN_TTL_DAYS`, and can be revoked. Every event records the actor the token was bound to, so an agent can never be mistaken for its human in the log.
+Tokens are opaque (`rly_...`), stored as SHA-256 with an optional pepper, expire after `RELAY_TOKEN_TTL_DAYS`, and can be revoked (`DELETE /v1/tokens/{id}`). Every event records the actor the token was bound to, so an agent can never be mistaken for its human in the log.
+
+Rules that keep an agent from escalating to its human:
+
+- Only a **human** token can mint tokens (`POST /v1/tokens`), revoke them, change identity bindings or posting mode (`PATCH /v1/me`), resolve approvals, or act as admin. An admin's agent token is not an admin.
+- `POST /v1/users` refuses an existing user (409) unless `reissue=true`; re-issuing is logged as `token.issued` with `issued_via=admin`.
+- The login device flow is approved only by the account owner in Slack or by an admin on the node; an unmapped Slack clicker is refused. One pending request per user per minute, and the DM asks the user to compare the code shown in their terminal.
+- `slack_user_id` is unique across users, and changing it emits `user.updated`.
+- Token minting, revocation, settings changes, and agent registration are all events (`token.issued`, `token.revoked`, `user.updated`, `agent.registered`).
+- User ids `relay`, `system`, `admin`, and anything starting with `relay` are reserved for system actors.
 
 ## Default policy by action type
 
@@ -25,7 +34,7 @@ Tokens are opaque (`rly_...`), stored as SHA-256 with an optional pepper, expire
 | `relay.ask` | auto | events only; the asked human is notified |
 | `relay.recall` | auto | read |
 | `slack.dm.owner` | auto | an agent messaging its own human |
-| `slack.post.as_agent` | auto | attributed "posted by X's agent" |
+| `slack.post.as_agent` | auto | attributed "posted by X's agent"; channel ids only, never a user or DM id |
 | `slack.post.as_user` | forbid | never impersonate a human |
 | `slack.dm.other` | approve | |
 | `github.issue.create` | approve | |
@@ -46,7 +55,7 @@ Only the human it was requested of (`requested_of`), via the Slack buttons or `P
 
 ## Audit log
 
-Every state-changing tool call emits `tool.called` (arguments with secrets redacted, external `target`) and `tool.result` (ok/error, duration), linked by `call_id` and `provenance.parent_event_ids`. Approvals emit `approval.requested`/`approval.resolved`. A2A exchanges emit `agent.message` with `surfaced_to`, the humans who were notified. Read-only tools are not audited by default; set `RELAY_AUDIT_READ_TOOLS=1` to log them too. `relay events --include-tool-calls` shows the audit trail.
+Every state-changing tool call emits `tool.called` (arguments with secrets redacted recursively, including token-shaped strings, external `target`) and `tool.result` (ok/error, duration), linked by `call_id` and `provenance.parent_event_ids`. Approval `details` are redacted the same way before they are stored. Approvals emit `approval.requested`/`approval.resolved`. A2A exchanges emit `agent.message` with `surfaced_to`, the humans who were notified. Read-only tools are not audited by default; set `RELAY_AUDIT_READ_TOOLS=1` to log them too. `relay events --include-tool-calls` shows the audit trail.
 
 ## Surfacing
 

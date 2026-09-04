@@ -68,6 +68,9 @@ async def request(
     chat: ChatApp | None = None,
     provenance: Provenance | None = None,
 ) -> ApprovalRow:
+    from relayagents.tools.runtime import redact
+
+    details = redact(details or {})
     now = datetime.now(UTC)
     approval_id = new_id("apr")
     expires = now + timedelta(seconds=ttl_s)
@@ -77,7 +80,7 @@ async def request(
             action=action,
             action_type=action_type,
             requested_of=requested_of,
-            details=details or {},
+            details=details,
             expires_at=expires,
         ),
         actor=requester,
@@ -94,7 +97,7 @@ async def request(
         requested_of=requested_of,
         action=action,
         action_type=action_type,
-        details=details or {},
+        details=details,
         status="pending",
         created_at=now,
         expires_at=expires,

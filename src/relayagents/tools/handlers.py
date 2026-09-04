@@ -4,7 +4,10 @@ changes state. Handlers are transport-agnostic: the same function serves MCP, CL
 from __future__ import annotations
 
 import contextlib
+import re
 from datetime import UTC, datetime
+
+import structlog
 
 from relayagents.api.a2a_broker import broker
 from relayagents.api.a2a_broker.types import Message
@@ -48,6 +51,9 @@ from relayagents.tools.schemas import (
     RequestApprovalOutput,
 )
 
+log = structlog.get_logger()
+_CHANNEL_ID = re.compile(r"^[CG][A-Z0-9_-]{3,}$")  # channel/group ids only, never U.../D... (DMs)
+
 
 class ToolError(Exception):
     """Raised for user-facing failures; transports map it to a clean error."""
@@ -57,12 +63,14 @@ class ToolError(Exception):
 
 
 async def recall(ctx: ToolContext, inp: RecallInput) -> RecallOutput:
+    """Event-log keyword leg runs here; vector + graph legs run in a worker (team key stays there)."""
     kinds = set(inp.kinds or ["graph", "vector", "event"])
     hits: list[MemoryHit] = []
-    async with ctx.db.session() as session:
-        store = EventStore(session)
-        if "event" in kinds:
-            for event, score in await store.keyword_search(inp.query, limit=inp.limit, types=None):
+    if "event" in kinds:
+        async with ctx.db.session() as session:
+            for event, score in await EventStore(session).keyword_search(
+                inp.query, limit=inp.limit, types=None
+            ):
                 hits.append(
                     MemoryHit(
                         text=_event_summary(event),
@@ -73,26 +81,14 @@ async def recall(ctx: ToolContext, inp: RecallInput) -> RecallOutput:
                         ref=event.id,
                     )
                 )
-        if "vector" in kinds and ctx.services.embedder is not None:
-            try:
-                emb = await ctx.services.embedder(inp.query)
-                for event, score in await store.vector_search(emb, limit=inp.limit):
-                    hits.append(
-                        MemoryHit(
-                            text=_event_summary(event),
-                            score=round(score, 3),
-                            kind="vector",
-                            event_ids=[event.id],
-                            valid_from=event.ts,
-                            ref=event.id,
-                        )
-                    )
-            except Exception as exc:
-                hits.append(
-                    MemoryHit(text=f"[vector search unavailable: {exc}]", score=0.0, kind="vector")
-                )
-    if "graph" in kinds and ctx.services.memory is not None:
-        hits.extend(await ctx.services.memory.search(inp.query, limit=inp.limit))
+    semantic_kinds = sorted(kinds & {"vector", "graph"})
+    if semantic_kinds and ctx.services.semantic is not None:
+        try:
+            hits.extend(
+                await ctx.services.semantic(inp.query, limit=inp.limit, kinds=semantic_kinds)
+            )
+        except Exception as exc:
+            log.warning("recall.semantic_failed", error=str(exc))
     # Merge: dedupe by event id, prefer highest score, keep provenance.
     best: dict[str, MemoryHit] = {}
     for h in hits:
@@ -148,13 +144,15 @@ async def items(ctx: ToolContext, inp: ItemsInput) -> ItemsOutput:
 async def events(ctx: ToolContext, inp: EventsInput) -> EventsOutput:
     actor = ctx.resolve_user(inp.actor)
     types = list(inp.type) if inp.type else None
+    # A bare user id ("grace") means the human and all of their agents; "grace.hermes" is exact.
+    is_user = bool(actor) and "." not in actor
     async with ctx.db.session() as session:
         found = await EventStore(session).query(
             since=parse_since(inp.since),
             types=types,
             thread_id=inp.thread,
-            user_id=actor if actor == ctx.user_id else None,
-            actor_id=actor if actor and actor != ctx.user_id else None,
+            user_id=actor if is_user else None,
+            actor_id=actor if actor and not is_user else None,
             text=inp.text,
             limit=inp.limit,
             descending=True,
@@ -285,6 +283,7 @@ async def request_approval(ctx: ToolContext, inp: RequestApprovalInput) -> Reque
         )
         await session.commit()
         approval_id = row.id
+        notified = row.chat_ts is not None
     if inp.wait:
         row = await approvals.wait(ctx.db.sessions, approval_id, timeout_s=inp.timeout_s)
     return RequestApprovalOutput(
@@ -292,6 +291,7 @@ async def request_approval(ctx: ToolContext, inp: RequestApprovalInput) -> Reque
         status=row.status,
         edited_action=row.edited_action,
         requested_of=row.requested_of,
+        notified=notified,
     )  # type: ignore[arg-type]
 
 
@@ -345,6 +345,10 @@ async def post(ctx: ToolContext, inp: PostInput) -> PostOutput:
     channel = inp.channel or ctx.settings.slack_team_channel
     if not channel:
         raise ToolError("no channel given and RELAY_SLACK_TEAM_CHANNEL is unset")
+    if not _CHANNEL_ID.fullmatch(channel):
+        raise ToolError(
+            "channel must be a Slack channel id (C... or G...); DMs go through the slack.dm.* policy, not post"
+        )
     attribution = (
         f"posted by {ctx.principal.display_name or ctx.user_id}'s agent"
         if ctx.actor.kind == "agent"

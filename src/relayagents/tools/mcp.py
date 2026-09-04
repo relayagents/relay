@@ -25,20 +25,17 @@ INSTRUCTIONS = (
 )
 
 
-def _principal(services: Services) -> Principal:
+def _principal() -> Principal:
+    # The MCP mount always runs behind RequireAuthMiddleware, so a missing token cannot reach here.
     tok = get_access_token()
     if tok is None:
-        # Only possible when auth is disabled (tests / local dev with RELAY_MCP_AUTH=off).
-        fallback = services.extras.get("mcp_unauthenticated_principal")
-        if fallback is None:
-            raise ToolError("unauthenticated")
-        return fallback  # type: ignore[no-any-return]
+        raise ToolError("unauthenticated")
     return principal_from_access_token(tok)
 
 
 def _make_tool(spec: ToolSpec, services: Services) -> Any:
     async def impl(**kwargs: Any) -> Any:
-        ctx = ToolContext(principal=_principal(services), services=services, transport="mcp")
+        ctx = ToolContext(principal=_principal(), services=services, transport="mcp")
         return await invoke(spec, ctx, kwargs)
 
     impl.__name__ = spec.name
@@ -46,14 +43,14 @@ def _make_tool(spec: ToolSpec, services: Services) -> Any:
     return mirror_signature(spec.input_model, impl, return_annotation=spec.output_model)
 
 
-def build_mcp_server(services: Services, *, require_auth: bool = True) -> MCPServer:
+def build_mcp_server(services: Services) -> MCPServer:
     public = services.settings.public_url.rstrip("/")
-    kwargs: dict[str, Any] = {}
-    if require_auth:
-        kwargs["token_verifier"] = RelayTokenVerifier(services)
-        kwargs["auth"] = AuthSettings(
+    kwargs: dict[str, Any] = {
+        "token_verifier": RelayTokenVerifier(services),
+        "auth": AuthSettings(
             issuer_url=public, resource_server_url=f"{public}/mcp", required_scopes=["tools"]
-        )  # type: ignore[arg-type]
+        ),
+    }
     server = MCPServer(
         name="relay", instructions=INSTRUCTIONS, website_url="https://relayagents.dev", **kwargs
     )

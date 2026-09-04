@@ -4,6 +4,9 @@ The *drafting* happens in the user's own agent (a Hermes cron calls `relay stand
 its judgement, then `relay standup submit`). Relay's part is deterministic: gather the sourced
 facts, render the Block Kit draft with Approve/Edit buttons, and post only on a click (mode=draft)
 or immediately with attribution (mode=auto). Nothing posts when mode=off.
+
+In draft mode the click is a real approval: ``submit`` opens an ``ApprovalRow`` (+
+``approval.requested``) and the button handlers resolve it (``approval.resolved``) before posting.
 """
 
 from __future__ import annotations
@@ -16,12 +19,11 @@ from typing import Any
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from relayagents.core import approvals
 from relayagents.core.events import (
     ActionItemClosed,
     ActionItemUpdated,
     Actor,
-    ApprovalRequested,
-    ApprovalResolved,
     Event,
     Provenance,
     ReportPosted,
@@ -31,6 +33,8 @@ from relayagents.core.models import UserRow
 from relayagents.core.projections import list_items
 from relayagents.core.store import EventStore
 from relayagents.tools.context import Services
+
+DRAFT_TTL_S = 12 * 3600
 
 
 class StandupDraft(BaseModel):
@@ -67,10 +71,10 @@ async def gather(
         draft.cited_event_ids.append(e.id)
     open_items = await list_items(session, assignee=user_id, status="open")
     reported = {
-        e.payload.item_id
+        e.payload.item_id  # type: ignore[attr-defined]
         for e in events
         if isinstance(e.payload, ReportPosted) and e.payload.item_id
-    }  # type: ignore[attr-defined]
+    }
     for item in open_items:
         if item.id not in reported:
             draft.questions.append(
@@ -79,7 +83,7 @@ async def gather(
     return draft
 
 
-def draft_blocks(draft: StandupDraft) -> list[dict[str, Any]]:
+def draft_blocks(draft: StandupDraft, *, approval_id: str | None = None) -> list[dict[str, Any]]:
     def section(title: str, xs: list[str]) -> str:
         return f"*{title}*\n" + ("\n".join(f"• {x}" for x in xs) if xs else "• _nothing_")
 
@@ -94,7 +98,7 @@ def draft_blocks(draft: StandupDraft) -> list[dict[str, Any]]:
         text += "\n*Open questions from your agent*\n" + "\n".join(
             f"• {q}" for q in draft.questions
         )
-    payload = json.dumps(draft.model_dump())
+    payload = json.dumps({**draft.model_dump(), "approval_id": approval_id})
     return [
         {
             "type": "section",
@@ -141,36 +145,32 @@ async def submit(services: Services, draft: StandupDraft, *, actor: Actor) -> di
         if user is None:
             raise KeyError(draft.user_id)
         mode = user.standup_mode
-        store = EventStore(session)
         if mode == "off":
             return {"mode": "off", "posted": False}
         if mode == "auto":
             ev = await _post(services, session, draft, user, mode="auto", actor=actor)
             await session.commit()
             return {"mode": "auto", "posted": True, "event_id": ev.id}
-        # draft mode: DM the draft with buttons; record the approval request.
-        from relayagents.core.ids import new_id
-
-        approval_id = new_id("apr")
-        req = Event.new(
-            ApprovalRequested(
-                approval_id=approval_id,
-                action=f"post standup for {draft.user_id}",
-                action_type="standup.post.draft",
-                requested_of=draft.user_id,
-                details={"draft": draft.model_dump()},
-            ),
-            actor=actor,
-            source="api",
-            thread_id=approval_id,
+        # draft mode: open a real approval (row + event) and DM the draft with buttons.
+        row = await approvals.request(
+            session,
+            requester=actor,
+            requested_of=draft.user_id,
+            action=f"post standup for {draft.user_id}",
+            action_type="standup.post.draft",
+            details={"draft": draft.model_dump()},
+            ttl_s=DRAFT_TTL_S,
+            chat=None,
         )
-        await store.append(req)
         if services.chat is not None:
-            await services.chat.dm(
-                draft.user_id, "Your standup draft is ready.", blocks=draft_blocks(draft)
+            ref = await services.chat.dm(
+                draft.user_id,
+                "Your standup draft is ready.",
+                blocks=draft_blocks(draft, approval_id=row.id),
             )
+            row.chat_channel, row.chat_ts = ref.channel, ref.ts
         await session.commit()
-        return {"mode": "draft", "posted": False, "approval_id": approval_id, "event_id": req.id}
+        return {"mode": "draft", "posted": False, "approval_id": row.id, "event_id": row.event_id}
 
 
 async def _post(
@@ -181,7 +181,6 @@ async def _post(
     *,
     mode: str,
     actor: Actor,
-    approval_id: str | None = None,
 ) -> Event:
     channel = services.settings.slack_team_channel
     ref = None
@@ -193,21 +192,10 @@ async def _post(
             if mode == "auto"
             else f"approved by {user.display_name}",
         )
-    prov = Provenance(parent_event_ids=list(draft.cited_event_ids))
-    store = EventStore(session)
-    if approval_id:
-        await store.append(
-            Event.new(
-                ApprovalResolved(approval_id=approval_id, decision="approved", resolved_by=user.id),
-                actor=Actor.human(user.id),
-                source="slack",
-                thread_id=approval_id,
-            )
-        )
     ev = Event.new(
         StandupPosted(
             user_id=user.id,
-            mode=mode,
+            mode=mode,  # type: ignore[arg-type]
             done=draft.done,
             doing=draft.doing,
             blocked=draft.blocked,
@@ -219,17 +207,38 @@ async def _post(
         actor=actor,
         source="slack",
         thread_id=f"standup:{user.id}:{datetime.now(UTC):%Y-%m-%d}",
-        provenance=prov,
-    )  # type: ignore[arg-type]
-    await store.append(ev)
+        provenance=Provenance(parent_event_ids=list(draft.cited_event_ids)),
+    )
+    await EventStore(session).append(ev)
     return ev
 
 
 # ---- Slack button handlers (called from api.slack.app) ----------------------------------------
 
 
+def _unpack(value: str) -> tuple[StandupDraft, str | None]:
+    raw = json.loads(value)
+    approval_id = raw.pop("approval_id", None)
+    return StandupDraft.model_validate(raw), approval_id
+
+
+async def _approve_and_post(
+    services: Services,
+    session: AsyncSession,
+    draft: StandupDraft,
+    user: UserRow,
+    approval_id: str | None,
+) -> Event:
+    if approval_id:
+        with contextlib.suppress(KeyError):  # the row may have expired; the click still counts
+            await approvals.resolve(
+                session, approval_id=approval_id, decision="approved", resolved_by=user.id
+            )
+    return await _post(services, session, draft, user, mode="draft", actor=Actor.human(user.id))
+
+
 async def post_standup_from_draft(services: Services, body: dict[str, Any], client: Any) -> None:
-    draft = StandupDraft.model_validate(json.loads(body["actions"][0]["value"]))
+    draft, approval_id = _unpack(body["actions"][0]["value"])
     async with services.db.session() as session:
         user = await session.get(UserRow, draft.user_id)
         if user is None or user.slack_user_id != body["user"]["id"]:
@@ -239,7 +248,7 @@ async def post_standup_from_draft(services: Services, body: dict[str, Any], clie
                 text="Only the owner can post their standup.",
             )
             return
-        ev = await _post(services, session, draft, user, mode="draft", actor=Actor.human(user.id))
+        ev = await _approve_and_post(services, session, draft, user, approval_id)
         await session.commit()
     await client.chat_update(
         channel=body["channel"]["id"],
@@ -255,7 +264,7 @@ async def post_standup_from_draft(services: Services, body: dict[str, Any], clie
 
 
 async def open_standup_edit_modal(services: Services, body: dict[str, Any], client: Any) -> None:
-    draft = StandupDraft.model_validate(json.loads(body["actions"][0]["value"]))
+    draft, approval_id = _unpack(body["actions"][0]["value"])
 
     def field(block_id: str, label: str, xs: list[str]) -> dict[str, Any]:
         return {
@@ -280,6 +289,7 @@ async def open_standup_edit_modal(services: Services, body: dict[str, Any], clie
                 {
                     "user_id": draft.user_id,
                     "cited_event_ids": draft.cited_event_ids,
+                    "approval_id": approval_id,
                     "channel": body["channel"]["id"],
                     "ts": body["message"]["ts"],
                 }
@@ -314,7 +324,7 @@ async def post_standup_from_modal(services: Services, body: dict[str, Any], clie
         user = await session.get(UserRow, draft.user_id)
         if user is None or user.slack_user_id != body["user"]["id"]:
             return
-        ev = await _post(services, session, draft, user, mode="draft", actor=Actor.human(user.id))
+        ev = await _approve_and_post(services, session, draft, user, meta.get("approval_id"))
         await session.commit()
     with contextlib.suppress(Exception):
         await client.chat_update(
