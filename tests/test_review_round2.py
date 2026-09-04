@@ -183,3 +183,109 @@ async def test_agents_cannot_resolve_via_rest(client: httpx.AsyncClient, team) -
             headers=auth(team["grace"]["agent"]),
         )
     ).status_code == 403
+
+
+# ---- round 3 -----------------------------------------------------------------------------------
+
+
+def test_redaction_leaves_ordinary_words_alone() -> None:
+    from relayagents.core.redact import redact
+
+    assert redact("the bearer of bad news: prod is down") == "the bearer of bad news: prod is down"
+    assert redact("Authorization: Bearer abcdefghijklmnopqrstuvwxyz") == "Authorization: ***"
+
+
+async def test_cli_approval_of_a_standup_draft_posts_it(
+    client: httpx.AsyncClient, team, services
+) -> None:  # type: ignore[no-untyped-def]
+    services.chat = RecordingChatApp(supports_actions=False)
+    agent, human = team["grace"]["agent"], team["grace"]["human"]
+    await client.post(f"{TOOLS_PREFIX}/report", json={"text": "cache landed"}, headers=auth(agent))
+    draft = (await client.get("/v1/standups/draft", headers=auth(agent))).json()
+    sub = (await client.post("/v1/standups", json=draft, headers=auth(agent))).json()
+    assert sub["mode"] == "draft" and "relay approvals approve" in services.chat.dms[-1]["text"]
+    r = await client.post(
+        f"/v1/approvals/{sub['approval_id']}/resolve",
+        json={"decision": "approved"},
+        headers=auth(human),
+    )
+    assert r.status_code == 200 and r.json()["posted_event_id"].startswith("evt_")
+    assert (
+        services.chat.posts[-1]["channel"] == "C_TEAM"
+        and "cache landed" in services.chat.posts[-1]["text"]
+    )
+    evs = (
+        await client.get("/v1/events", params={"type": ["standup.posted"]}, headers=auth(human))
+    ).json()
+    assert len(evs) == 1 and evs[0]["actor"] == {"kind": "human", "id": "grace"}
+
+
+async def test_reissue_can_promote_and_change_timezone(services, team) -> None:  # type: ignore[no-untyped-def]
+    out = await create_user_with_tokens(
+        services,
+        AddUserIn(
+            id="grace", display_name="Grace", timezone="Europe/Berlin", is_admin=True, reissue=True
+        ),
+        issued_by=Actor.system("relay.test"),
+    )
+    assert out.user.is_admin is True and out.user.timezone == "Europe/Berlin"
+    out = await create_user_with_tokens(
+        services,
+        AddUserIn(id="grace", display_name="Grace", timezone="UTC", reissue=True),
+        issued_by=Actor.system("relay.test"),
+    )
+    assert out.user.timezone == "UTC" and out.user.is_admin is True  # no silent demotion
+
+
+async def test_ask_and_standups_are_queued_for_indexing(
+    client: httpx.AsyncClient, team, services
+) -> None:  # type: ignore[no-untyped-def]
+    class Queue:
+        def __init__(self) -> None:
+            self.jobs: list[str] = []
+
+        async def enqueue_job(self, name: str, *args, **kw):  # type: ignore[no-untyped-def]
+            self.jobs.append(name)
+
+    services.queue = Queue()
+    await client.post(
+        f"{TOOLS_PREFIX}/ask",
+        json={"user": "grace", "question": "who owns the pager?"},
+        headers=auth(team["ada"]["agent"]),
+    )
+    await client.patch(
+        "/v1/me", json={"standup_mode": "auto"}, headers=auth(team["grace"]["human"])
+    )
+    draft = (await client.get("/v1/standups/draft", headers=auth(team["grace"]["agent"]))).json()
+    await client.post("/v1/standups", json=draft, headers=auth(team["grace"]["agent"]))
+    assert services.queue.jobs == ["index_events", "index_events"]
+
+
+async def test_embed_backlog_sweeps_unembedded_events(services) -> None:  # type: ignore[no-untyped-def]
+    from relayagents.core.events import DecisionMade, Event
+    from relayagents.core.store import EventStore
+    from relayagents.workers.jobs import embed_backlog
+
+    class Dim:
+        model_name = "dim"
+
+        async def embed_query(self, text: str) -> list[float]:
+            return [1.0] * EMBEDDING_DIM
+
+        async def embed_documents(self, texts: Sequence[str]):  # type: ignore[no-untyped-def]
+            return [[1.0] * EMBEDDING_DIM for _ in texts]
+
+    async with services.db.session() as session:
+        for i in range(3):
+            await EventStore(session).append(
+                Event.new(
+                    DecisionMade(decision_id=f"d{i}", statement=f"decision {i}"),
+                    actor=Actor.human("ada"),
+                    source="meeting",
+                )
+            )
+        await session.commit()
+    assert await embed_backlog({"services": services}) == 0  # no embedder → no-op
+    services.embedder = Dim()
+    assert await embed_backlog({"services": services}) == 3
+    assert await embed_backlog({"services": services}) == 0  # nothing left

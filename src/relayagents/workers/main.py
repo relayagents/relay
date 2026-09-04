@@ -12,6 +12,7 @@ from relayagents.core.config import get_settings
 from relayagents.core.queue import job_deserializer, job_serializer
 from relayagents.workers.jobs import (
     daily_digest,
+    embed_backlog,
     extract_meeting,
     index_events,
     rebuild_graph,
@@ -45,14 +46,22 @@ _settings = get_settings()
 
 
 class WorkerSettings:
-    functions = [extract_meeting, index_events, daily_digest, rebuild_graph, semantic_recall]
+    functions = [
+        extract_meeting,
+        index_events,
+        daily_digest,
+        rebuild_graph,
+        semantic_recall,
+        embed_backlog,
+    ]
     cron_jobs = [
         cron(
             daily_digest,
             hour=_settings.digest_hour_utc,
             minute=_settings.digest_minute_utc,
             run_at_startup=False,
-        )
+        ),
+        cron(embed_backlog, minute={0, 15, 30, 45}, run_at_startup=True),
     ]
     on_startup = startup
     on_shutdown = shutdown

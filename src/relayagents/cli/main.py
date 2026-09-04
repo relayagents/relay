@@ -307,7 +307,9 @@ def add_user(
         if json_output:
             _echo_json({**out.model_dump(), "provision": prov})
             return
-        typer.echo(f"user {out.user.id} created. Agent {out.agent_id} registered.")
+        typer.echo(
+            f"user {out.user.id} {'updated' if reissue else 'created'}. Agent {out.agent_id} registered."
+        )
         if no_container:
             typer.echo(
                 "hermes: not started (--no-container). On the node: scripts/add-user.sh " + user_id

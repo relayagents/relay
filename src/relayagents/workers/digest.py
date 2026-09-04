@@ -16,6 +16,7 @@ from relayagents.core.events import (
     ReportPosted,
     StandupPosted,
 )
+from relayagents.core.indexing import index_later
 from relayagents.core.store import EventStore
 from relayagents.tools.context import Services
 
@@ -115,4 +116,10 @@ async def post_digest(services: Services, *, hours: int = 24, now: datetime | No
         )
         await store.append(ev)
         await session.commit()
-        return ev
+    if services.memory is not None or services.embedder is not None:  # in a worker: index directly
+        from relayagents.workers.jobs import _index
+
+        await _index(services, [ev])
+    else:
+        await index_later(services, [ev])
+    return ev

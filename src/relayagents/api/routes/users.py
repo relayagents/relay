@@ -181,13 +181,10 @@ async def create_user_with_tokens(
                     409, f"slack user id {body.slack_user_id!r} is already bound to {clash.id!r}"
                 )
         if user is not None:
-            changes = {
-                k: v
-                for k, v in body.model_dump(
-                    include={"slack_user_id", "github_login", "email", "timezone"}
-                ).items()
-                if v not in (None, "UTC") and getattr(user, k) != v
-            }
+            wanted = body.model_dump(include={"slack_user_id", "github_login", "email", "timezone"})
+            changes = {k: v for k, v in wanted.items() if v is not None and getattr(user, k) != v}
+            if body.is_admin and not user.is_admin:
+                changes["is_admin"] = True  # promotion only; demote explicitly via the DB
             for k, v in changes.items():
                 setattr(user, k, v)
             if changes:

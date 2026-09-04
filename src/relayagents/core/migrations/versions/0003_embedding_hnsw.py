@@ -3,6 +3,9 @@
 Revision ID: 0003
 Revises: 0002
 Create Date: 2026-09-03
+
+Built CONCURRENTLY outside the migration transaction so an upgrade never blocks writes or api
+readiness on a node that already holds many embeddings.
 """
 
 from __future__ import annotations
@@ -16,12 +19,17 @@ depends_on = None
 
 
 def upgrade() -> None:
-    if op.get_bind().dialect.name == "postgresql":
+    if op.get_bind().dialect.name != "postgresql":
+        return
+    with op.get_context().autocommit_block():
         op.execute(
-            "CREATE INDEX IF NOT EXISTS ix_events_embedding_hnsw ON events USING hnsw (embedding vector_cosine_ops)"
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_events_embedding_hnsw "
+            "ON events USING hnsw (embedding vector_cosine_ops)"
         )
 
 
 def downgrade() -> None:
-    if op.get_bind().dialect.name == "postgresql":
-        op.execute("DROP INDEX IF EXISTS ix_events_embedding_hnsw")
+    if op.get_bind().dialect.name != "postgresql":
+        return
+    with op.get_context().autocommit_block():
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_events_embedding_hnsw")

@@ -29,6 +29,7 @@ from relayagents.core.events import (
     ReportPosted,
     StandupPosted,
 )
+from relayagents.core.indexing import index_later
 from relayagents.core.models import UserRow
 from relayagents.core.projections import list_items
 from relayagents.core.store import EventStore
@@ -217,7 +218,24 @@ async def _post(
         provenance=Provenance(parent_event_ids=list(draft.cited_event_ids)),
     )
     await EventStore(session).append(ev)
+    await index_later(services, [ev])
     return ev
+
+
+async def post_approved_draft(
+    services: Services, session: AsyncSession, approval: Any
+) -> Event | None:
+    """Called when a `standup.post.draft` approval is approved outside Slack (CLI/REST):
+    post the draft stored in the approval's details."""
+    if approval.action_type != "standup.post.draft" or approval.status != "approved":
+        return None
+    draft = StandupDraft.model_validate(
+        approval.details.get("draft") or {"user_id": approval.requested_of}
+    )
+    user = await session.get(UserRow, draft.user_id)
+    if user is None:
+        return None
+    return await _post(services, session, draft, user, mode="draft", actor=Actor.human(user.id))
 
 
 # ---- Slack button handlers (called from api.slack.app) ----------------------------------------

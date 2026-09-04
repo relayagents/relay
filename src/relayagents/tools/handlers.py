@@ -28,6 +28,7 @@ from relayagents.core.permissions import is_forbidden, policy_for
 from relayagents.core.projections import apply as project
 from relayagents.core.projections import list_decisions, list_items
 from relayagents.core.protocols import MemoryHit
+from relayagents.core.redact import redact
 from relayagents.core.store import EventStore, event_summary, parse_since
 from relayagents.tools.context import ToolContext
 from relayagents.tools.schemas import (
@@ -159,8 +160,6 @@ async def events(ctx: ToolContext, inp: EventsInput) -> EventsOutput:
 
 
 async def report(ctx: ToolContext, inp: ReportInput) -> ReportOutput:
-    from relayagents.tools.runtime import redact
-
     links = [inp.link] if inp.link else []
     text = redact(inp.text)
     async with ctx.db.session() as session:
@@ -233,6 +232,7 @@ async def ask(ctx: ToolContext, inp: AskInput) -> AskOutput:
         )
         await EventStore(session).append(q)
         await session.commit()
+    await index_later(ctx.services, [q])
     if ctx.services.chat is not None:
         with contextlib.suppress(Exception):
             await ctx.services.chat.dm(

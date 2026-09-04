@@ -17,6 +17,7 @@ from relayagents.core.events import Actor, ApprovalRequested, ApprovalResolved, 
 from relayagents.core.ids import new_id
 from relayagents.core.models import ApprovalRow
 from relayagents.core.protocols import ChatApp
+from relayagents.core.redact import redact
 from relayagents.core.store import EventStore
 
 
@@ -83,8 +84,6 @@ async def request(
     chat: ChatApp | None = None,
     provenance: Provenance | None = None,
 ) -> ApprovalRow:
-    from relayagents.tools.runtime import redact
-
     details = redact(details or {})
     action = redact(action)
     now = datetime.now(UTC)
@@ -157,8 +156,6 @@ async def resolve(
         raise PermissionError(
             f"{resolved_by} cannot resolve an approval requested of {row.requested_of}"
         )
-    from relayagents.tools.runtime import redact
-
     edited_action = redact(edited_action) if edited_action else edited_action
     note = redact(note) if note else note
     now = datetime.now(UTC)
