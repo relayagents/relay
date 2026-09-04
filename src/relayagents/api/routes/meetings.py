@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
@@ -22,6 +23,41 @@ router = APIRouter(prefix="/v1/meetings", tags=["meetings"])
 
 ALLOWED_AUDIO = {".m4a", ".mp3", ".wav", ".flac", ".ogg", ".webm", ".mp4"}
 CHUNK = 1 << 20
+
+
+async def _store_files(
+    services: Services,
+    base: Path,
+    meeting_id: str,
+    audio: UploadFile | None,
+    transcript: UploadFile | None,
+) -> tuple[str | None, str | None]:
+    audio_path: str | None = None
+    transcript_path: str | None = None
+    if audio is not None:
+        suffix = Path(audio.filename or "audio.m4a").suffix.lower() or ".m4a"
+        if suffix not in ALLOWED_AUDIO:
+            raise HTTPException(400, f"unsupported audio type {suffix}")
+        dest = base / f"audio{suffix}"
+        await _save_upload(audio, dest, max_bytes=services.settings.max_upload_mb << 20)
+        audio_path = str(dest)
+    if transcript is not None:
+        tdest = base / "transcript.upload.json"
+        await _save_upload(
+            transcript, tdest, max_bytes=min(64, services.settings.max_upload_mb) << 20
+        )
+        try:
+            data = json.loads(tdest.read_bytes())
+            data.setdefault("meeting_id", meeting_id)
+            Transcript.model_validate(data)
+        except Exception as exc:
+            raise HTTPException(422, f"invalid transcript: {exc}") from exc
+        finally:
+            tdest.unlink(missing_ok=True)
+        dest = base / "transcript.json"
+        dest.write_text(json.dumps(data))
+        transcript_path = str(dest)
+    return audio_path, transcript_path
 
 
 async def _save_upload(upload: UploadFile, dest: Path, *, max_bytes: int) -> int:
@@ -90,30 +126,13 @@ async def upload_meeting(
     people = [p.strip() for p in participants.split(",") if p.strip()] or [principal.user_id]
     base = services.settings.data_dir / "meetings" / meeting_id
     base.mkdir(parents=True, exist_ok=True)
-    audio_path: str | None = None
-    transcript_path: str | None = None
-    if audio is not None:
-        suffix = Path(audio.filename or "audio.m4a").suffix.lower() or ".m4a"
-        if suffix not in ALLOWED_AUDIO:
-            raise HTTPException(400, f"unsupported audio type {suffix}")
-        dest = base / f"audio{suffix}"
-        await _save_upload(audio, dest, max_bytes=services.settings.max_upload_mb << 20)
-        audio_path = str(dest)
-    if transcript is not None:
-        tdest = base / "transcript.upload.json"
-        await _save_upload(
-            transcript, tdest, max_bytes=min(64, services.settings.max_upload_mb) << 20
+    try:
+        audio_path, transcript_path = await _store_files(
+            services, base, meeting_id, audio, transcript
         )
-        try:
-            data = json.loads(tdest.read_bytes())
-            data.setdefault("meeting_id", meeting_id)
-            Transcript.model_validate(data)
-        except Exception as exc:
-            raise HTTPException(422, f"invalid transcript: {exc}") from exc
-        dest = base / "transcript.json"
-        dest.write_text(json.dumps(data))
-        tdest.unlink(missing_ok=True)
-        transcript_path = str(dest)
+    except Exception:
+        shutil.rmtree(base, ignore_errors=True)  # nothing references the directory yet
+        raise
     row = MeetingRow(
         id=meeting_id,
         title=title,

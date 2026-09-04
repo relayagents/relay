@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from relayagents.api.auth import current_principal, get_services
+from relayagents.api.auth import current_principal, get_services, human_principal
 from relayagents.core import approvals
 from relayagents.core.models import ApprovalRow
 from relayagents.tools.context import Principal, Services
@@ -56,12 +56,10 @@ class ResolveIn(BaseModel):
 async def resolve_approval(
     approval_id: str,
     body: ResolveIn,
-    principal: Annotated[Principal, Depends(current_principal)],
+    principal: Annotated[Principal, Depends(human_principal)],
     services: Annotated[Services, Depends(get_services)],
 ) -> dict[str, Any]:
     """Resolve from the CLI/REST (Slack buttons are the usual path). Only the human it was requested of may resolve."""
-    if principal.actor.kind != "human":
-        raise HTTPException(403, "only humans resolve approvals")
     if body.decision not in ("approved", "denied"):
         raise HTTPException(400, "decision must be approved or denied")
     async with services.db.session() as session:

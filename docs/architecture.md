@@ -37,7 +37,7 @@ cli/         `relay` (typer) and the HTTP client
 4. **Agents.** Each Hermes container long-polls `GET /a2a/inbox`. For an action item it typically calls `request_approval` (the human clicks in Slack), runs `gh issue create` with the human's token, then invokes a coding agent in the sandbox. The coding agent talks to Relay over MCP (`my_items`, `report`).
 5. **Memory.** Workers embed events (pgvector) and index them into Graphiti (Kuzu file in the workers' own volume). `recall` runs the keyword leg in relay-api and asks the workers for the vector and graph legs through the `semantic_recall` job, so the team model key never leaves the workers. Hits carry event ids.
 6. **Daily updates.** The Hermes bridge runs `relay standup draft` at the user's time, lets Hermes reword it without adding facts, and submits. Mode `draft` DMs a Block Kit draft; `auto` posts with attribution; `off` does nothing. A worker posts the team digest after the window.
-7. **Replay.** `relay replay --rebuild-graph --rebuild-projections` truncates derived stores and re-applies every event.
+7. **Replay.** `docker compose exec relay-workers relay replay --rebuild-graph --rebuild-projections` truncates derived stores (projections, embeddings, graph) and re-applies every event. It runs in the workers container because that is where the team key and the graph volume live.
 
 ## Deployment topology
 

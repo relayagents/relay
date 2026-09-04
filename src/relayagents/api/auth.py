@@ -21,9 +21,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relayagents.core.config import Settings
-from relayagents.core.events import Actor
+from relayagents.core.events import Actor, Event, TokenIssued, TokenRevoked
 from relayagents.core.ids import new_id
 from relayagents.core.models import ApiTokenRow, UserRow
+from relayagents.core.store import EventStore
 from relayagents.tools.context import Principal, Services
 
 TOKEN_PREFIX = "rly_"
@@ -64,9 +65,6 @@ async def mint_token(
     )
     session.add(row)
     await session.flush()
-    from relayagents.core.events import Event, TokenIssued
-    from relayagents.core.store import EventStore
-
     await EventStore(session).append(
         Event.new(
             TokenIssued(
@@ -93,9 +91,6 @@ async def revoke_token(
         return None
     if row.revoked_at is None:
         row.revoked_at = datetime.now(UTC)
-        from relayagents.core.events import Event, TokenRevoked
-        from relayagents.core.store import EventStore
-
         await EventStore(session).append(
             Event.new(
                 TokenRevoked(token_id=token_id, user_id=user_id, reason=reason),

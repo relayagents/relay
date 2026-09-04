@@ -69,7 +69,9 @@ class EventRow(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON)
     provenance: Mapped[dict[str, Any]] = mapped_column(JSON)
     text_index: Mapped[str] = mapped_column(Text, default="", doc="Flattened searchable text.")
-    embedding = mapped_column(EmbeddingType, nullable=True)
+    embedding = mapped_column(
+        EmbeddingType, nullable=True, deferred=True
+    )  # loaded only by vector_search
 
     __table_args__ = (Index("ix_events_type_ts", "type", "ts"),)
 

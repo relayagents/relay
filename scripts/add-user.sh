@@ -10,7 +10,7 @@ cd "$(dirname "$0")/.."
 user="${1:?usage: scripts/add-user.sh <user-id> [relay add-user options...]}"; shift
 [ -f .env ] || { echo "run scripts/bootstrap.sh first"; exit 1; }
 
-image="$(grep -E '^RELAY_HERMES_IMAGE=' .env | cut -d= -f2-)"; image="${image:-ghcr.io/relayagents/relay-hermes:latest}"
+image="$(grep -E '^RELAY_HERMES_IMAGE=' .env | cut -d= -f2- || true)"; image="${image:-ghcr.io/relayagents/relay-hermes:latest}"
 mkdir -p var/agents && chmod 700 var/agents
 env_file="var/agents/${user}.env"
 

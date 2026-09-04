@@ -131,7 +131,7 @@ async def send_message(
     if row is not None:
         # Continuing an existing task: only its original sender (or that sender's human/agents)
         # may append, and only through the agent it was addressed to.
-        origin_user = row.from_agent.split(".", 1)[0]
+        origin_user = Actor.agent(row.from_agent).user_id
         if row.to_agent != to_agent or (
             from_actor.id != row.from_agent and from_actor.user_id != origin_user
         ):

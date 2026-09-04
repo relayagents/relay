@@ -49,6 +49,15 @@ def flatten_text(event: Event) -> str:
     return "\n".join(parts)
 
 
+def event_summary(event: Event) -> str:
+    """One line for humans and search hits: ``[type] main text``."""
+    p = event.payload.model_dump()
+    for key in ("statement", "text", "title", "action", "answer"):
+        if p.get(key):
+            return f"[{event.type}] {p[key]}"
+    return f"[{event.type}]"
+
+
 def parse_since(value: str | None, *, now: datetime | None = None) -> datetime | None:
     """Accept ISO timestamps or relative windows like ``24h``, ``7d``, ``30m``."""
     if not value:
@@ -214,7 +223,9 @@ class EventStore:
     async def clear_embeddings(self) -> None:
         from sqlalchemy import update
 
-        await self.session.execute(update(EventRow).values(embedding=None))
+        await self.session.execute(
+            update(EventRow).where(EventRow.embedding.isnot(None)).values(embedding=None)
+        )
 
     async def vector_search(
         self, embedding: list[float], *, limit: int = 10

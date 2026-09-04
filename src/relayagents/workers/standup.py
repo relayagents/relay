@@ -163,11 +163,18 @@ async def submit(services: Services, draft: StandupDraft, *, actor: Actor) -> di
             chat=None,
         )
         if services.chat is not None:
-            ref = await services.chat.dm(
-                draft.user_id,
-                "Your standup draft is ready.",
-                blocks=draft_blocks(draft, approval_id=row.id),
-            )
+            if services.chat.supports_actions:
+                ref = await services.chat.dm(
+                    draft.user_id,
+                    "Your standup draft is ready.",
+                    blocks=draft_blocks(draft, approval_id=row.id),
+                )
+            else:
+                ref = await services.chat.dm(
+                    draft.user_id,
+                    f"Your standup draft is ready ({row.id}). Post it with `relay approvals approve {row.id}` or edit it with `relay standup submit`.",
+                    blocks=draft_blocks(draft, approval_id=row.id)[:1],
+                )
             row.chat_channel, row.chat_ts = ref.channel, ref.ts
         await session.commit()
         return {"mode": "draft", "posted": False, "approval_id": row.id, "event_id": row.event_id}

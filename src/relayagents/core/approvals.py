@@ -21,17 +21,32 @@ from relayagents.core.store import EventStore
 
 
 def approval_blocks(
-    approval_id: str, requester: str, action: str, action_type: str
+    approval_id: str, requester: str, action: str, action_type: str, *, interactive: bool = True
 ) -> list[dict[str, Any]]:
-    """Slack Block Kit for an approval request. Buttons carry the approval id."""
-    return [
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f":lock: *Approval requested* by `{requester}`\n> {action}\n_policy: `{action_type}`_ · `{approval_id}`",
-            },
+    """Slack Block Kit for an approval request. Buttons carry the approval id; without Socket Mode
+    the message explains how to resolve from the CLI instead."""
+    header = {
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": f":lock: *Approval requested* by `{requester}`\n> {action}\n_policy: `{action_type}`_ · `{approval_id}`",
         },
+    }
+    if not interactive:
+        return [
+            header,
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"Resolve from your terminal: `relay approvals approve {approval_id}` or `relay approvals deny {approval_id}`",
+                    }
+                ],
+            },
+        ]
+    return [
+        header,
         {
             "type": "actions",
             "block_id": f"approval:{approval_id}",
@@ -71,6 +86,7 @@ async def request(
     from relayagents.tools.runtime import redact
 
     details = redact(details or {})
+    action = redact(action)
     now = datetime.now(UTC)
     approval_id = new_id("apr")
     expires = now + timedelta(seconds=ttl_s)
@@ -109,7 +125,13 @@ async def request(
             ref = await chat.dm(
                 requested_of,
                 f"Approval requested by {requester.id}: {action}",
-                blocks=approval_blocks(approval_id, requester.id, action, action_type),
+                blocks=approval_blocks(
+                    approval_id,
+                    requester.id,
+                    action,
+                    action_type,
+                    interactive=chat.supports_actions,
+                ),
             )
             row.chat_channel, row.chat_ts = ref.channel, ref.ts
         except Exception:
@@ -135,6 +157,10 @@ async def resolve(
         raise PermissionError(
             f"{resolved_by} cannot resolve an approval requested of {row.requested_of}"
         )
+    from relayagents.tools.runtime import redact
+
+    edited_action = redact(edited_action) if edited_action else edited_action
+    note = redact(note) if note else note
     now = datetime.now(UTC)
     row.status = decision
     row.resolved_by = resolved_by

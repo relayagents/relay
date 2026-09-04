@@ -14,17 +14,13 @@ from typing import Any
 import structlog
 
 from relayagents.core.protocols import MemoryHit
-from relayagents.core.store import EventStore
+from relayagents.core.store import EventStore, event_summary
 
 log = structlog.get_logger()
 
 
 def _summary(event: Any) -> str:
-    p = event.payload.model_dump()
-    for key in ("statement", "text", "title", "action", "answer"):
-        if p.get(key):
-            return f"[{event.type}] {p[key]}"
-    return f"[{event.type}]"
+    return event_summary(event)
 
 
 async def semantic_search(
@@ -67,7 +63,9 @@ class ArqSemanticSearch:
     async def __call__(
         self, query: str, *, limit: int = 10, kinds: Sequence[str] = ("vector", "graph")
     ) -> list[MemoryHit]:
-        job = await self.pool.enqueue_job("semantic_recall", query, limit, list(kinds))
+        job = await self.pool.enqueue_job(
+            "semantic_recall", query, limit, list(kinds), _expires=int(self.timeout_s) + 5
+        )
         if job is None:
             return []
         try:

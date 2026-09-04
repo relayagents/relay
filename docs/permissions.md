@@ -51,7 +51,7 @@ Rules that keep an agent from escalating to its human:
 
 ## Who can resolve an approval
 
-Only the human it was requested of (`requested_of`), via the Slack buttons or `POST /v1/approvals/{id}/resolve` with a human token. Agents cannot resolve approvals, and other humans get a 403. The resolver may edit the action text; the edit is recorded in `approval.resolved.edited_action`.
+Only the human it was requested of (`requested_of`), via the Slack buttons, `relay approvals approve|deny <id>`, or `POST /v1/approvals/{id}/resolve` with a human token. When the Slack app has a bot token but no Socket Mode app token, Relay sends notices without buttons and points to the CLI instead. Agents cannot resolve approvals, and other humans get a 403. The resolver may edit the action text; the edit is recorded in `approval.resolved.edited_action`.
 
 ## Audit log
 

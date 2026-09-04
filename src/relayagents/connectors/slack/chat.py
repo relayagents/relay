@@ -13,9 +13,10 @@ from relayagents.core.protocols import ChatMessageRef
 
 
 class SlackChatApp:
-    def __init__(self, bot_token: str, db: Database) -> None:
+    def __init__(self, bot_token: str, db: Database, *, supports_actions: bool = True) -> None:
         self.client = AsyncWebClient(token=bot_token)
         self.db = db
+        self.supports_actions = supports_actions
         self._dm_cache: dict[
             str, str
         ] = {}  # keyed by Slack user id, so a rebinding takes effect at once
@@ -75,9 +76,10 @@ class SlackChatApp:
 class RecordingChatApp:
     """In-memory ChatApp for tests and `RELAY_ENVIRONMENT=test`. Records every call."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, supports_actions: bool = True) -> None:
         self.posts: list[dict[str, Any]] = []
         self.dms: list[dict[str, Any]] = []
+        self.supports_actions = supports_actions
         self._n = 0
 
     def _ref(self, channel: str) -> ChatMessageRef:
