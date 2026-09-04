@@ -120,13 +120,31 @@ async def _load_transcript(services: Services, meeting_id: str) -> Transcript:
     )  # type: ignore[attr-defined]
 
 
-async def _index(services: Services, events: list[Event]) -> None:
-    if services.memory is None or not events:
+async def _index(services: Services, events: list[Event], *, raise_errors: bool = False) -> None:
+    """Derived stores: embeddings (pgvector leg) and the graph.
+
+    In the extraction path a failure is logged and the job still succeeds (the log is the
+    truth; derived stores can be rebuilt). In a rebuild, failures propagate: a half-rebuilt
+    graph reported as success would be worse than a loud error.
+    """
+    if not events:
         return
-    try:
-        await services.memory.index(events)
-    except Exception as exc:
-        log.warning("memory.index_failed", error=str(exc))
+    if services.embedder is not None:
+        from relayagents.connectors.memory.embeddings import embed_events
+
+        try:
+            await embed_events(services.db, services.embedder, events)
+        except Exception as exc:
+            if raise_errors:
+                raise
+            log.warning("embeddings.failed", error=str(exc))
+    if services.memory is not None:
+        try:
+            await services.memory.index(events)
+        except Exception as exc:
+            if raise_errors:
+                raise
+            log.warning("memory.index_failed", error=str(exc))
 
 
 async def index_events(ctx: dict[str, Any], event_ids: list[str]) -> int:
@@ -145,22 +163,39 @@ async def daily_digest(ctx: dict[str, Any]) -> str:
 
 
 async def rebuild_graph(ctx: dict[str, Any]) -> int:
-    """Wipe the derived graph and embeddings, then re-derive both from every event in the log."""
+    """Wipe the derived graph and embeddings, then re-derive both from every event in the log.
+
+    Raises on the first indexing failure so a broken rebuild is never reported as success.
+    """
     services: Services = ctx["services"]
     if services.memory is None and services.embedder is None:
         return 0
     if services.memory is not None:
         await services.memory.reset()
+    if services.embedder is not None:
+        async with services.db.session() as session:
+            await EventStore(session).clear_embeddings()
+            await session.commit()
     n = 0
     batch: list[Event] = []
     async with services.db.session() as session:
         async for ev in EventStore(session).iter_all():
             batch.append(ev)
             if len(batch) >= 50:
-                await _index(services, batch)
+                await _index(services, batch, raise_errors=True)
                 n += len(batch)
                 batch = []
     if batch:
-        await _index(services, batch)
+        await _index(services, batch, raise_errors=True)
         n += len(batch)
     return n
+
+
+async def semantic_recall(
+    ctx: dict[str, Any], query: str, limit: int, kinds: list[str]
+) -> list[dict[str, Any]]:
+    """The vector + graph legs of `recall`, run here so the team key never reaches relay-api."""
+    from relayagents.connectors.memory.search import semantic_search
+
+    hits = await semantic_search(ctx["services"], query, limit=limit, kinds=kinds)
+    return [h.model_dump(mode="json") for h in hits]

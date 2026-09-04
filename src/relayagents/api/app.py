@@ -29,30 +29,38 @@ from relayagents.tools.rest import build_router as build_tools_router
 log = structlog.get_logger()
 
 
-def build_services(settings: Settings, *, db: Database | None = None) -> Services:
+def build_services(
+    settings: Settings, *, db: Database | None = None, role: str = "api"
+) -> Services:
+    """``role="api"`` never touches a model provider; ``role="worker"`` holds the team key."""
     db = db or Database(settings.database_url)
     services = Services(db=db, settings=settings)
     if settings.slack_enabled:
         from relayagents.connectors.slack import SlackChatApp
 
         services.chat = SlackChatApp(settings.slack_bot_token, db)
-    from relayagents.connectors.memory.embeddings import make_embedder
+    if settings.workspace_mcp_url:
+        from relayagents.connectors.workspace import WorkspaceMCP
 
-    services.embedder = make_embedder(settings)
-    if settings.memory_backend == "graphiti-kuzu":
-        with contextlib.suppress(Exception):  # optional extra; recall degrades to event search
-            from relayagents.connectors.memory import GraphitiKuzuMemory
+        services.office = WorkspaceMCP(settings.workspace_mcp_url)
+    if role == "worker":
+        from relayagents.connectors.memory.embeddings import make_embedder
 
-            services.memory = GraphitiKuzuMemory(settings)
+        services.embedder = make_embedder(settings)
+        if settings.memory_backend == "graphiti-kuzu":
+            try:
+                from relayagents.connectors.memory import GraphitiKuzuMemory
+
+                services.memory = GraphitiKuzuMemory(settings)
+            except ImportError as exc:  # optional extra; recall degrades to event search
+                log.warning("memory.unavailable", error=str(exc))
     return services
 
 
-def create_app(
-    settings: Settings | None = None, *, services: Services | None = None, mcp_auth: bool = True
-) -> FastAPI:
+def create_app(settings: Settings | None = None, *, services: Services | None = None) -> FastAPI:
     settings = settings or get_settings()
     services = services or build_services(settings)
-    mcp = build_mcp_server(services, require_auth=mcp_auth)
+    mcp = build_mcp_server(services)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -61,15 +69,18 @@ def create_app(
         redis = None
         if settings.environment != "test":
             try:
-                from arq import create_pool
-                from arq.connections import RedisSettings
+                from relayagents.core.queue import connect
 
-                redis = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+                redis = await connect(settings.redis_url)
             except Exception as exc:
                 log.warning("redis.unavailable", error=str(exc))
         app.state.redis = redis
+        if redis is not None and services.semantic is None:
+            from relayagents.connectors.memory.search import ArqSemanticSearch
+
+            services.semantic = ArqSemanticSearch(redis)
         slack = None
-        if services.chat is not None and settings.slack_enabled and settings.environment != "test":
+        if settings.slack_socket_mode_enabled and settings.environment != "test":
             from relayagents.api.slack.app import SlackRunner
 
             slack = SlackRunner(services)

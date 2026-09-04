@@ -99,6 +99,26 @@ class MemoryStore(Protocol):
 
 
 @runtime_checkable
+class Embedder(Protocol):
+    """Team embedding model. Workers only; relay-api never holds the key."""
+
+    model_name: str
+
+    async def embed_query(self, text: str) -> list[float]: ...
+
+    async def embed_documents(self, texts: Sequence[str]) -> list[list[float]]: ...
+
+
+@runtime_checkable
+class SemanticSearch(Protocol):
+    """The vector + graph legs of `recall`, reachable from relay-api without a model key."""
+
+    async def __call__(
+        self, query: str, *, limit: int = 10, kinds: Sequence[str] = ("vector", "graph")
+    ) -> list[MemoryHit]: ...
+
+
+@runtime_checkable
 class Transcriber(Protocol):
     async def transcribe(
         self,

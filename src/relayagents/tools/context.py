@@ -8,7 +8,7 @@ from typing import Any, Literal
 from relayagents.core.config import Settings
 from relayagents.core.db import Database
 from relayagents.core.events import Actor
-from relayagents.core.protocols import ChatApp, MemoryStore
+from relayagents.core.protocols import ChatApp, Embedder, MemoryStore, OfficeSuite, SemanticSearch
 
 Transport = Literal["mcp", "cli", "rest", "internal"]
 
@@ -28,8 +28,12 @@ class Services:
     db: Database
     settings: Settings
     chat: ChatApp | None = None
+    office: OfficeSuite | None = None
+    # Workers only: hold the team model key.
     memory: MemoryStore | None = None
-    embedder: Any | None = None  # callable(str) -> list[float]; optional
+    embedder: Embedder | None = None
+    # API side: reaches the semantic legs through the job queue.
+    semantic: SemanticSearch | None = None
     extras: dict[str, Any] = field(default_factory=dict)
 
 

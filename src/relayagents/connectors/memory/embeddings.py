@@ -1,69 +1,86 @@
-"""Event embeddings for the pgvector leg of `recall`.
+"""Event embeddings for the pgvector leg of `recall`. **Workers only.**
 
-Uses the team's embedding model (workers' key only). When no key or a non-OpenAI model is
-configured, ``make_embedder`` returns ``None`` and recall silently runs without the vector leg.
+The embedder runs on the team's embedding model through Pydantic AI (any provider it knows,
+``provider:model``). relay-api never constructs it: query-time embedding happens in the
+``semantic_recall`` job so the team key stays in the workers (ADR-0002).
 """
 
 from __future__ import annotations
 
-import os
 from collections.abc import Sequence
 
-from sqlalchemy import update
+import structlog
 
 from relayagents.core.config import Settings
 from relayagents.core.db import Database
 from relayagents.core.events import Event
-from relayagents.core.models import EventRow
-from relayagents.core.store import flatten_text
+from relayagents.core.models import EMBEDDING_DIM
+from relayagents.core.store import EventStore, flatten_text
 
-EMBED_TYPES = {
-    "decision.made",
-    "action_item.created",
-    "action_item.closed",
-    "question.opened",
-    "question.answered",
-    "report.posted",
-    "transcript.segment",
-    "standup.posted",
-    "digest.posted",
-}
+log = structlog.get_logger()
+BATCH = 100
 
 
-class OpenAIEmbedder:
-    def __init__(self, model: str, dim: int) -> None:
-        from openai import AsyncOpenAI
+class PydanticAIEmbedder:
+    """``core.protocols.Embedder`` on ``pydantic_ai.embeddings.Embedder``."""
 
-        self.client = AsyncOpenAI()
-        self.model = model
-        self.dim = dim
+    def __init__(self, model: object) -> None:
+        from pydantic_ai.embeddings import Embedder, EmbeddingSettings
 
-    async def __call__(self, text: str) -> list[float]:
-        return (await self.embed_many([text]))[0]
-
-    async def embed_many(self, texts: Sequence[str]) -> list[list[float]]:
-        resp = await self.client.embeddings.create(
-            model=self.model, input=[t[:8000] for t in texts], dimensions=self.dim
+        self.model_name = (
+            model if isinstance(model, str) else getattr(model, "model_name", "custom")
         )
-        return [d.embedding for d in resp.data]
+        self._embedder = Embedder(model, settings=EmbeddingSettings(truncate=True))  # type: ignore[arg-type]
+
+    async def embed_query(self, text: str) -> list[float]:
+        result = await self._embedder.embed_query(text)
+        return _check(list(result.embeddings[0]), self.model_name)
+
+    async def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
+        out: list[list[float]] = []
+        for i in range(0, len(texts), BATCH):
+            result = await self._embedder.embed_documents(list(texts[i : i + BATCH]))
+            out.extend(_check(list(v), self.model_name) for v in result.embeddings)
+        return out
 
 
-def make_embedder(settings: Settings) -> OpenAIEmbedder | None:
-    provider, _, model = settings.embedding_model.partition(":")
-    if provider == "openai" and model and os.environ.get("OPENAI_API_KEY"):
-        return OpenAIEmbedder(model, settings.embedding_dim)
-    return None
+def _check(vec: list[float], model: str) -> list[float]:
+    if len(vec) != EMBEDDING_DIM:
+        raise ValueError(
+            f"embedding model {model!r} returns {len(vec)} dimensions; the events.embedding column is {EMBEDDING_DIM}. Pick a {EMBEDDING_DIM}-d model or add a migration."
+        )
+    return vec
 
 
-async def embed_events(db: Database, embedder: OpenAIEmbedder, events: Sequence[Event]) -> int:
-    """Compute and store embeddings for the events that carry text. Returns how many were embedded."""
-    todo = [(e, flatten_text(e)) for e in events if e.type in EMBED_TYPES]
-    todo = [(e, t) for e, t in todo if t]
+def make_embedder(settings: Settings) -> PydanticAIEmbedder | None:
+    """Build the team embedder, or return None (with a log line saying why) so recall degrades."""
+    from pydantic_ai.embeddings import UserError, infer_embedding_model
+
+    name = settings.embedding_model.strip()
+    if name in ("", "none", "off"):
+        log.info("embeddings.disabled", reason="RELAY_EMBEDDING_MODEL is empty")
+        return None
+    try:
+        infer_embedding_model(name)  # fails fast on an unknown provider or a missing key
+    except (UserError, ValueError) as exc:
+        log.warning("embeddings.disabled", model=name, reason=str(exc).splitlines()[0])
+        return None
+    log.info("embeddings.enabled", model=name)
+    return PydanticAIEmbedder(name)
+
+
+async def embed_events(db: Database, embedder: object, events: Sequence[Event]) -> int:
+    """Embed the events that carry text and store the vectors. Returns how many were embedded."""
+    from relayagents.connectors.memory import INDEXED_TYPES
+
+    todo = [(e.id, flatten_text(e)) for e in events if e.type in INDEXED_TYPES]
+    todo = [(i, t) for i, t in todo if t.strip()]
     if not todo:
         return 0
-    vectors = await embedder.embed_many([t for _, t in todo])
+    vectors = await embedder.embed_documents([t for _, t in todo])  # type: ignore[attr-defined]
     async with db.session() as session:
-        for (e, _), vec in zip(todo, vectors, strict=True):
-            await session.execute(update(EventRow).where(EventRow.id == e.id).values(embedding=vec))
+        await EventStore(session).set_embeddings(
+            list(zip([i for i, _ in todo], vectors, strict=True))
+        )
         await session.commit()
     return len(todo)

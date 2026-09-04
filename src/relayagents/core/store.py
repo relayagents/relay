@@ -198,6 +198,24 @@ class EventStore:
             out.append((row_to_event(r), matched / len(terms)))
         return out
 
+    async def set_embeddings(self, pairs: Sequence[tuple[str, list[float]]]) -> None:
+        if not pairs:
+            return
+        from sqlalchemy import bindparam, update
+
+        table = EventRow.__table__
+        stmt = (
+            update(table)
+            .where(table.c.id == bindparam("event_id"))
+            .values(embedding=bindparam("vec"))
+        )
+        await self.session.execute(stmt, [{"event_id": i, "vec": v} for i, v in pairs])
+
+    async def clear_embeddings(self) -> None:
+        from sqlalchemy import update
+
+        await self.session.execute(update(EventRow).values(embedding=None))
+
     async def vector_search(
         self, embedding: list[float], *, limit: int = 10
     ) -> list[tuple[Event, float]]:
