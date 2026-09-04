@@ -1,0 +1,12 @@
+# Default Hermes Agent config seeded into each user's home on first start.
+# Keys marked "verify" should be checked against the Hermes version pinned in the Dockerfile.
+# The user's own model provider and key are added by the user (never by Relay).
+name: relay-hermes
+skills_dir: ~/.hermes/skills          # verify
+mcp_servers:                          # verify: Hermes MCP client config block
+  relay:
+    url: __RELAY_URL__/mcp
+    headers:
+      Authorization: Bearer __RELAY_TOKEN__
+tools:
+  shell: true                         # needed for `relay ...` and `gh ...`

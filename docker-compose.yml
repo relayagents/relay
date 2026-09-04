@@ -1,0 +1,144 @@
+# Relay node. `cp .env.example .env`, fill it in, then `docker compose up -d`.
+name: relay
+
+x-relay-env: &relay-env
+  RELAY_PUBLIC_URL: ${RELAY_PUBLIC_URL:-https://${RELAY_HOSTNAME:-localhost}}
+  RELAY_TEAM_NAME: ${RELAY_TEAM_NAME:-relay}
+  RELAY_ENVIRONMENT: ${RELAY_ENVIRONMENT:-prod}
+  RELAY_LOG_LEVEL: ${RELAY_LOG_LEVEL:-INFO}
+  RELAY_DATABASE_URL: postgresql+asyncpg://relay:${POSTGRES_PASSWORD:-relay}@postgres:5432/relay
+  RELAY_REDIS_URL: redis://redis:6379/0
+  RELAY_DATA_DIR: /var/lib/relay
+  RELAY_TOKEN_PEPPER: ${RELAY_TOKEN_PEPPER:-}
+  RELAY_MEMORY_BACKEND: ${RELAY_MEMORY_BACKEND:-graphiti-kuzu}
+  RELAY_GRAPH_PATH: /var/lib/relay/graph.kuzu
+  RELAY_EXTRACTION_MODEL: ${RELAY_EXTRACTION_MODEL:-keyword}
+  RELAY_EMBEDDING_MODEL: ${RELAY_EMBEDDING_MODEL:-openai:text-embedding-3-small}
+  RELAY_SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+  RELAY_SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
+  RELAY_SLACK_TEAM_CHANNEL: ${SLACK_TEAM_CHANNEL:-}
+  RELAY_WORKSPACE_MCP_URL: http://workspace-mcp:8000/mcp
+  RELAY_SANDBOX_IMAGE: ${RELAY_SANDBOX_IMAGE:-ghcr.io/relayagents/relay-sandbox:latest}
+  # Team model key: used ONLY by workers (extraction, digests, graph). Never by user agents.
+  OPENAI_API_KEY: ${TEAM_OPENAI_API_KEY:-}
+  ANTHROPIC_API_KEY: ${TEAM_ANTHROPIC_API_KEY:-}
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: relay
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-relay}
+      POSTGRES_DB: relay
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "${RELAY_BIND_IP:-127.0.0.1}:5432:5432"   # set RELAY_BIND_IP to your Tailscale IP for a remote GPU worker
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U relay -d relay"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    ports:
+      - "${RELAY_BIND_IP:-127.0.0.1}:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  relay-api:
+    image: ${RELAY_IMAGE:-ghcr.io/relayagents/relay:latest}
+    build:
+      context: .
+      dockerfile: deploy/docker/relay/Dockerfile
+    command: ["api"]
+    environment: *relay-env
+    volumes:
+      - relaydata:/var/lib/relay
+      - /var/run/docker.sock:/var/run/docker.sock:ro   # `relay add-user` starts per-user Hermes containers
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    expose: ["8000"]
+    restart: unless-stopped
+
+  relay-workers:
+    image: ${RELAY_IMAGE:-ghcr.io/relayagents/relay:latest}
+    build:
+      context: .
+      dockerfile: deploy/docker/relay/Dockerfile
+    command: ["workers"]
+    environment: *relay-env
+    volumes:
+      - relaydata:/var/lib/relay
+    depends_on:
+      relay-api: { condition: service_healthy }
+    restart: unless-stopped
+
+  relay-ingest:
+    # CPU fallback on the node. For a GPU box elsewhere on the tailnet, run docker-compose.gpu.yml there instead.
+    image: ${RELAY_INGEST_IMAGE:-ghcr.io/relayagents/relay-ingest:latest}
+    build:
+      context: .
+      dockerfile: deploy/docker/ingest/Dockerfile
+      args:
+        TORCH_INDEX: https://download.pytorch.org/whl/cpu
+    command: ["ingest"]
+    environment:
+      <<: *relay-env
+      RELAY_TRANSCRIBER: ${RELAY_TRANSCRIBER:-whisperx}
+      RELAY_WHISPERX_MODEL: ${RELAY_WHISPERX_MODEL:-small}
+      RELAY_WHISPERX_DEVICE: cpu
+      RELAY_HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - relaydata:/var/lib/relay
+    depends_on:
+      relay-api: { condition: service_healthy }
+    restart: unless-stopped
+
+  workspace-mcp:
+    # Google Workspace via taylorwilsdon/google_workspace_mcp, multi-user OAuth 2.1. Relay never sees Google tokens.
+    image: ${WORKSPACE_MCP_IMAGE:-ghcr.io/taylorwilsdon/google_workspace_mcp:latest}
+    environment:
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      WORKSPACE_MCP_BASE_URI: ${RELAY_PUBLIC_URL:-https://${RELAY_HOSTNAME:-localhost}}/workspace-mcp
+      WORKSPACE_MCP_PORT: "8000"
+      MCP_ENABLE_OAUTH21: "true"
+      OAUTHLIB_INSECURE_TRANSPORT: "0"
+    volumes:
+      - workspacedata:/app/.credentials
+    expose: ["8000"]
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      RELAY_HOSTNAME: ${RELAY_HOSTNAME:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on:
+      - relay-api
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  relaydata:
+  workspacedata:
+  caddydata:
+  caddyconfig:

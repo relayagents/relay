@@ -1,0 +1,19 @@
+# TLS for the Relay node. RELAY_HOSTNAME=relay.relayagents.dev gets a public cert; a tailnet name
+# (e.g. relay.tail1234.ts.net) works with `tailscale cert` files mounted and `tls` pointed at them.
+{$RELAY_HOSTNAME:localhost} {
+	encode gzip
+
+	handle_path /workspace-mcp/* {
+		reverse_proxy workspace-mcp:8000
+	}
+
+	handle {
+		reverse_proxy relay-api:8000 {
+			# MCP streamable HTTP and long-poll inboxes hold connections open.
+			transport http {
+				read_timeout 0
+				write_timeout 0
+			}
+		}
+	}
+}

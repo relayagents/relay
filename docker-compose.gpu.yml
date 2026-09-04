@@ -1,0 +1,38 @@
+# Optional GPU worker. Run this on the machine with the GPU (joined to the tailnet):
+#   RELAY_DATABASE_URL=postgresql+asyncpg://relay:<pw>@<node-tailscale-ip>:5432/relay \
+#   RELAY_REDIS_URL=redis://<node-tailscale-ip>:6379/0 \
+#   docker compose -f docker-compose.gpu.yml up -d
+# It consumes the same `relay:ingest` queue as the CPU fallback on the node; stop the node's
+# relay-ingest (`docker compose stop relay-ingest`) if you want all jobs on the GPU.
+name: relay-gpu
+
+services:
+  relay-ingest:
+    image: ${RELAY_INGEST_IMAGE:-ghcr.io/relayagents/relay-ingest:cuda}
+    build:
+      context: .
+      dockerfile: deploy/docker/ingest/Dockerfile
+      args:
+        TORCH_INDEX: https://download.pytorch.org/whl/cu124
+    command: ["ingest"]
+    environment:
+      RELAY_DATABASE_URL: ${RELAY_DATABASE_URL:?set to the node's Postgres over Tailscale}
+      RELAY_REDIS_URL: ${RELAY_REDIS_URL:?set to the node's Redis over Tailscale}
+      RELAY_DATA_DIR: /var/lib/relay
+      RELAY_TRANSCRIBER: whisperx
+      RELAY_WHISPERX_MODEL: ${RELAY_WHISPERX_MODEL:-large-v3}
+      RELAY_WHISPERX_DEVICE: cuda
+      RELAY_WHISPERX_COMPUTE_TYPE: float16
+      RELAY_HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      # Audio and transcripts live on the node's relaydata volume. Share it here (NFS/rsync/Tailscale drive)
+      # or point RELAY_DATA_DIR at a synced folder; see docs/architecture.md "GPU worker".
+      - ${RELAY_DATA_DIR:-./data}:/var/lib/relay
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "relay": {
+      "type": "http",
+      "url": "${RELAY_URL}/mcp",
+      "headers": { "Authorization": "Bearer ${RELAY_TOKEN}" }
+    }
+  }
+}
