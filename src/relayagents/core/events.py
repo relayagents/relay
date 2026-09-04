@@ -256,6 +256,39 @@ class DigestPosted(Payload):
     message_ref: str | None = None
 
 
+class TokenIssued(Payload):
+    type: Literal["token.issued"] = "token.issued"
+    token_id: str
+    user_id: str
+    token_actor: Actor
+    label: str
+    expires_at: datetime | None = None
+    issued_via: Literal["add_user", "device_flow", "api", "admin"]
+
+
+class TokenRevoked(Payload):
+    type: Literal["token.revoked"] = "token.revoked"
+    token_id: str
+    user_id: str
+    reason: str | None = None
+
+
+class UserUpdated(Payload):
+    """A change to identity bindings or posting mode. These gate approvals, so they are logged."""
+
+    type: Literal["user.updated"] = "user.updated"
+    user_id: str
+    changes: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentRegistered(Payload):
+    type: Literal["agent.registered"] = "agent.registered"
+    agent_id: str
+    user_id: str
+    harness: str
+    push_url: str | None = None
+
+
 AnyPayload = Annotated[
     MeetingStarted
     | TranscriptSegment
@@ -272,7 +305,11 @@ AnyPayload = Annotated[
     | ApprovalRequested
     | ApprovalResolved
     | StandupPosted
-    | DigestPosted,
+    | DigestPosted
+    | TokenIssued
+    | TokenRevoked
+    | UserUpdated
+    | AgentRegistered,
     Field(discriminator="type"),
 ]
 
@@ -369,6 +406,7 @@ __all__ = [
     "Actor",
     "ActorKind",
     "AgentMessage",
+    "AgentRegistered",
     "AnyPayload",
     "ApprovalRequested",
     "ApprovalResolved",
@@ -383,8 +421,11 @@ __all__ = [
     "ReportPosted",
     "Source",
     "StandupPosted",
+    "TokenIssued",
+    "TokenRevoked",
     "ToolCalled",
     "ToolResult",
     "TranscriptSegment",
+    "UserUpdated",
     "Visibility",
 ]

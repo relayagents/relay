@@ -36,6 +36,12 @@ Every fact in Relay is an append-only `Event` (`src/relayagents/core/events.py`)
 | `approval.resolved` | `approval_id, decision (approved/denied/expired), resolved_by, edited_action, note` | Slack buttons, REST |
 | `standup.posted` | `user_id, mode, done, doing, blocked, questions, cited_event_ids, channel, message_ref` | standup submit |
 | `digest.posted` | `window_start, window_end, shipped, in_progress, blockers, decisions_needed, cited_event_ids, quiet` | digest worker |
+| `token.issued` | `token_id, user_id, token_actor, label, expires_at, issued_via (add_user/device_flow/api/admin)` | token minting |
+| `token.revoked` | `token_id, user_id, reason` | `DELETE /v1/tokens/{id}` |
+| `user.updated` | `user_id, changes` | `PATCH /v1/me` (identity bindings, posting mode) |
+| `agent.registered` | `agent_id, user_id, harness, push_url` | AgentCard registration |
+
+Callers may publish only `report.posted`, `question.*`, `action_item.*`, and `decision.made` through `POST /v1/events`; every other type is produced by Relay itself (ingest, extraction, broker, approvals, standups, digests, tokens). `source` is set by the server.
 
 Adding a type: add the payload class and include it in `AnyPayload`, add a sample to `tests/test_events.py`, add a row here, and (if projections care) a branch in `core/projections.py`.
 
@@ -58,4 +64,4 @@ Migrations live in `src/relayagents/core/migrations` (Alembic, async). `relay mi
 
 ## Search
 
-`recall` runs three legs and merges by event id: Graphiti graph search (facts with validity intervals and episode ids), pgvector cosine search over event embeddings (when a team embedding key is configured), and lexical search over `text_index`. Each hit carries `event_ids` so an agent can cite it.
+`recall` runs three legs and merges by score, deduplicated by event id: lexical search over `text_index` (in relay-api), and, through the `semantic_recall` job in relay-workers, pgvector cosine search over event embeddings plus Graphiti graph search (facts with validity intervals and episode ids). The semantic legs live in the workers because they need the team model key, which relay-api never holds. Each hit carries `event_ids` so an agent can cite it. Embeddings are written when events are indexed and rebuilt by `relay replay --rebuild-graph`.

@@ -72,12 +72,23 @@ SAMPLES: dict[str, ev.Payload] = {
     "digest.posted": ev.DigestPosted(
         window_start=NOW, window_end=NOW, shipped=["migration"], quiet=False
     ),
+    "token.issued": ev.TokenIssued(
+        token_id="tok_1",
+        user_id="ada",
+        token_actor=Actor.agent("ada.hermes"),
+        label="agent:hermes",
+        expires_at=NOW,
+        issued_via="add_user",
+    ),
+    "token.revoked": ev.TokenRevoked(token_id="tok_1", user_id="ada", reason="laptop lost"),
+    "user.updated": ev.UserUpdated(user_id="ada", changes={"standup_mode": "auto"}),
+    "agent.registered": ev.AgentRegistered(agent_id="ada.hermes", user_id="ada", harness="hermes"),
 }
 
 
 def test_every_type_has_a_sample() -> None:
     assert set(SAMPLES) == set(EVENT_TYPES) == set(PAYLOAD_TYPES)
-    assert len(EVENT_TYPES) == 16
+    assert len(EVENT_TYPES) == 20
 
 
 @pytest.mark.parametrize("etype", EVENT_TYPES)
