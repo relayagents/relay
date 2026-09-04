@@ -12,6 +12,7 @@ from arq.connections import RedisSettings
 from relayagents.core.config import get_settings
 from relayagents.core.db import Database
 from relayagents.core.models import MeetingRow
+from relayagents.core.queue import job_deserializer, job_serializer
 from relayagents.ingest.fixture import FixtureTranscriber
 
 log = structlog.get_logger()
@@ -108,6 +109,8 @@ class WorkerSettings:
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
     queue_name = INGEST_QUEUE
+    job_serializer = job_serializer
+    job_deserializer = job_deserializer
     max_jobs = 1
     job_timeout = 3600
 

@@ -37,9 +37,6 @@ class Settings(BaseSettings):
         description="Optional server-side pepper mixed into token hashes. Rotate = revoke all.",
     )
     token_ttl_days: int = 365
-    admin_users: list[str] = Field(
-        default_factory=list, description="User ids allowed to add users."
-    )
 
     # Team memory (graph). Backend is pluggable; see docs/protocols.md.
     memory_backend: Literal["graphiti-kuzu", "none"] = "graphiti-kuzu"
@@ -53,8 +50,15 @@ class Settings(BaseSettings):
             "'keyword' selects the deterministic offline extractor (no API key needed)."
         ),
     )
-    embedding_model: str = "openai:text-embedding-3-small"
-    embedding_dim: int = 1536
+    embedding_model: str = Field(
+        default="openai:text-embedding-3-small",
+        description="Pydantic AI embedding model, 1536-d (see EMBEDDING_DIM). Empty disables the vector leg.",
+    )
+
+    # Uploads
+    max_upload_mb: int = Field(
+        default=512, description="Largest accepted recording. Caddy enforces the same limit."
+    )
 
     # Transcription
     transcriber: Literal["whisperx", "fixture"] = "whisperx"
@@ -71,9 +75,8 @@ class Settings(BaseSettings):
     # Google Workspace via workspace-mcp (per-user OAuth handled by that service).
     workspace_mcp_url: str = "http://workspace-mcp:8000/mcp"
 
-    # Coding-agent sandbox
+    # Coding-agent sandbox image, advertised to user agents (they run it; Relay does not).
     sandbox_image: str = "ghcr.io/relayagents/relay-sandbox:latest"
-    sandbox_runner: Literal["docker", "local"] = "docker"
 
     # Digest schedule (UTC cron fields for arq)
     digest_hour_utc: int = 17
@@ -85,6 +88,12 @@ class Settings(BaseSettings):
 
     @property
     def slack_enabled(self) -> bool:
+        """Can post via the Web API (workers and API). Needs only the bot token."""
+        return bool(self.slack_bot_token)
+
+    @property
+    def slack_socket_mode_enabled(self) -> bool:
+        """Can receive button clicks over Socket Mode. API only; needs the app token too."""
         return bool(self.slack_bot_token and self.slack_app_token)
 
 
