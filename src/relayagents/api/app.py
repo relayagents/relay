@@ -36,6 +36,9 @@ def build_services(settings: Settings, *, db: Database | None = None) -> Service
         from relayagents.connectors.slack import SlackChatApp
 
         services.chat = SlackChatApp(settings.slack_bot_token, db)
+    from relayagents.connectors.memory.embeddings import make_embedder
+
+    services.embedder = make_embedder(settings)
     if settings.memory_backend == "graphiti-kuzu":
         with contextlib.suppress(Exception):  # optional extra; recall degrades to event search
             from relayagents.connectors.memory import GraphitiKuzuMemory

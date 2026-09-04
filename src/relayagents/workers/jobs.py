@@ -145,21 +145,22 @@ async def daily_digest(ctx: dict[str, Any]) -> str:
 
 
 async def rebuild_graph(ctx: dict[str, Any]) -> int:
-    """Wipe the derived graph and re-index every event from the log."""
+    """Wipe the derived graph and embeddings, then re-derive both from every event in the log."""
     services: Services = ctx["services"]
-    if services.memory is None:
+    if services.memory is None and services.embedder is None:
         return 0
-    await services.memory.reset()
+    if services.memory is not None:
+        await services.memory.reset()
     n = 0
     batch: list[Event] = []
     async with services.db.session() as session:
         async for ev in EventStore(session).iter_all():
             batch.append(ev)
             if len(batch) >= 50:
-                await services.memory.index(batch)
+                await _index(services, batch)
                 n += len(batch)
                 batch = []
     if batch:
-        await services.memory.index(batch)
+        await _index(services, batch)
         n += len(batch)
     return n
