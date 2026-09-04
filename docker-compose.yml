@@ -25,7 +25,7 @@ x-team-keys: &team-keys
   RELAY_MEMORY_BACKEND: ${RELAY_MEMORY_BACKEND:-graphiti-kuzu}
   RELAY_GRAPH_PATH: /var/lib/relay/graph/graph.kuzu
   RELAY_EXTRACTION_MODEL: ${RELAY_EXTRACTION_MODEL:-keyword}
-  RELAY_EMBEDDING_MODEL: ${RELAY_EMBEDDING_MODEL:-openai:text-embedding-3-small}
+  RELAY_EMBEDDING_MODEL: ${RELAY_EMBEDDING_MODEL-openai:text-embedding-3-small}   # set-but-empty disables the vector leg
   RELAY_DIGEST_HOUR_UTC: ${RELAY_DIGEST_HOUR_UTC:-17}
   RELAY_DIGEST_MINUTE_UTC: ${RELAY_DIGEST_MINUTE_UTC:-0}
 

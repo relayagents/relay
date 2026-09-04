@@ -8,7 +8,6 @@ default to keep the log readable; set ``RELAY_AUDIT_READ_TOOLS=1`` to log them t
 from __future__ import annotations
 
 import os
-import re
 import time
 from typing import Any
 
@@ -16,6 +15,7 @@ from pydantic import BaseModel, ValidationError
 
 from relayagents.core.events import Event, Provenance, ToolCalled, ToolResult
 from relayagents.core.ids import new_id
+from relayagents.core.redact import redact
 from relayagents.core.store import EventStore
 from relayagents.tools.context import ToolContext
 from relayagents.tools.handlers import ToolError
@@ -84,37 +84,6 @@ async def invoke(
                     )
                 )
                 await session.commit()
-
-
-_SENSITIVE = (
-    "token",
-    "secret",
-    "password",
-    "passwd",
-    "api_key",
-    "apikey",
-    "authorization",
-    "cookie",
-    "credential",
-    "private_key",
-)
-_SENSITIVE_VALUE = re.compile(
-    r"(?i)\b(?:bearer\s+\S+|rly_[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{16,}|xox[abp]-[A-Za-z0-9-]{10,}|gh[pous]_[A-Za-z0-9]{20,})"
-)
-
-
-def redact(value: Any) -> Any:
-    """Recursively mask secret-looking keys and token-looking strings before anything is logged."""
-    if isinstance(value, dict):
-        return {
-            k: ("***" if any(s in str(k).lower() for s in _SENSITIVE) else redact(v))
-            for k, v in value.items()
-        }
-    if isinstance(value, list):
-        return [redact(v) for v in value]
-    if isinstance(value, str):
-        return _SENSITIVE_VALUE.sub("***", value)
-    return value
 
 
 def _redact(args: dict[str, Any]) -> dict[str, Any]:

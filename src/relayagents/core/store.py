@@ -220,6 +220,22 @@ class EventStore:
         )
         await self.session.execute(stmt, [{"event_id": i, "vec": v} for i, v in pairs])
 
+    async def unembedded(self, types: Sequence[str], *, limit: int = 200) -> list[Event]:
+        """Events of the given types that have no vector yet (backlog sweep)."""
+        rows = (
+            await self.session.scalars(
+                select(EventRow)
+                .where(
+                    EventRow.type.in_(list(types)),
+                    EventRow.embedding.is_(None),
+                    EventRow.text_index != "",
+                )
+                .order_by(EventRow.seq.desc())
+                .limit(limit)
+            )
+        ).all()
+        return [row_to_event(r) for r in rows]
+
     async def clear_embeddings(self) -> None:
         from sqlalchemy import update
 

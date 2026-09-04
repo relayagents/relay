@@ -156,6 +156,20 @@ async def index_events(ctx: dict[str, Any], event_ids: list[str]) -> int:
     return len(events)
 
 
+async def embed_backlog(ctx: dict[str, Any]) -> int:
+    """Belt and braces for anything that was appended without an index_later: embed events that
+    still have no vector. Runs on a short cron; a no-op without an embedder."""
+    services: Services = ctx["services"]
+    if services.embedder is None:
+        return 0
+    from relayagents.connectors.memory import INDEXED_TYPES
+    from relayagents.connectors.memory.embeddings import embed_events
+
+    async with services.db.session() as session:
+        events = await EventStore(session).unembedded(sorted(INDEXED_TYPES))
+    return await embed_events(services.db, services.embedder, events) if events else 0
+
+
 async def daily_digest(ctx: dict[str, Any]) -> str:
     services: Services = ctx["services"]
     ev = await post_digest(services)

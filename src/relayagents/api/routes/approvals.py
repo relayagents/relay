@@ -76,5 +76,13 @@ async def resolve_approval(
             raise HTTPException(404, "no such approval") from exc
         except PermissionError as exc:
             raise HTTPException(403, str(exc)) from exc
+        posted = None
+        if row.status == "approved" and row.action_type == "standup.post.draft":
+            from relayagents.workers.standup import post_approved_draft
+
+            posted = await post_approved_draft(services, session, row)
         await session.commit()
-        return _out(row)
+        out = _out(row)
+        if posted is not None:
+            out["posted_event_id"] = posted.id
+        return out

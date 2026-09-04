@@ -7,7 +7,7 @@ command -v docker >/dev/null || { echo "docker is required"; exit 1; }
 docker compose version >/dev/null || { echo "docker compose v2 is required"; exit 1; }
 
 gen_secret() {  # gen_secret NAME BYTES — set NAME in .env if it is missing or still a placeholder
-  if ! grep -qE "^$1=.+" .env || grep -qE "^$1=change-me$" .env; then
+  if ! grep -qE "^$1=[^[:space:]#]" .env || grep -qE "^$1=change-me([[:space:]]|$)" .env; then
     v=$(openssl rand -hex "$2")
     if grep -qE "^$1=" .env; then sed -i.bak "s/^$1=.*/$1=${v}/" .env && rm -f .env.bak; else printf '%s=%s\n' "$1" "$v" >> .env; fi
     echo "generated $1"
