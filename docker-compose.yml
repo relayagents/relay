@@ -22,7 +22,7 @@ x-relay-env: &relay-env
 x-team-keys: &team-keys
   OPENAI_API_KEY: ${TEAM_OPENAI_API_KEY:-}
   ANTHROPIC_API_KEY: ${TEAM_ANTHROPIC_API_KEY:-}
-  RELAY_MEMORY_BACKEND: ${RELAY_MEMORY_BACKEND:-graphiti-kuzu}
+  RELAY_MEMORY_BACKEND: ${RELAY_MEMORY_BACKEND:-none}   # graphiti-kuzu is opt-in (ADR-0005) and needs an image built with RELAY_EXTRAS="--extra graph"
   RELAY_GRAPH_PATH: /var/lib/relay/graph/graph.kuzu
   RELAY_EXTRACTION_MODEL: ${RELAY_EXTRACTION_MODEL:-keyword}
   RELAY_EMBEDDING_MODEL: ${RELAY_EMBEDDING_MODEL-openai:text-embedding-3-small}   # set-but-empty disables the vector leg
@@ -90,7 +90,7 @@ services:
       <<: [*relay-env, *team-keys]
     volumes:
       - relaydata:/var/lib/relay
-      - graphdata:/var/lib/relay/graph     # the derived graph; workers only
+      - graphdata:/var/lib/relay/graph     # only used when RELAY_MEMORY_BACKEND=graphiti-kuzu
     depends_on:
       relay-api: { condition: service_healthy }
     restart: unless-stopped
@@ -155,7 +155,7 @@ volumes:
   pgdata:
   redisdata:
   relaydata:     # meetings (audio + transcripts); shared by api, workers, ingest
-  graphdata:     # derived graph; workers only
+  graphdata:     # derived graph, opt-in; workers only
   workspacedata:
   caddydata:
   caddyconfig:

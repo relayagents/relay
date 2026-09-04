@@ -32,9 +32,8 @@ flowchart LR
   subgraph node["Relay node (VPS or Mac mini, on Tailscale)"]
     API["relay-api<br/>REST · MCP server · A2A broker · Slack Socket Mode"]
     W["relay-workers<br/>extraction · PM · digest · graph"]
-    PG[("Postgres + pgvector<br/>event log = truth")]
+    PG[("Postgres + pgvector<br/>event log = truth,<br/>projections, embeddings")]
     R[("Redis / arq")]
-    G[("Graphiti on Kuzu<br/>derived graph")]
     WS["workspace-mcp<br/>per-user Google OAuth"]
     subgraph pool["Agent pool"]
       H1["Hermes · ada"]
@@ -53,7 +52,6 @@ flowchart LR
   API <--> R
   W <--> PG
   W <--> R
-  W --> G
   GPU <--> R
   API <-->|A2A via broker| H1
   API <-->|A2A via broker| H2
@@ -72,7 +70,7 @@ The same nine operations exist as MCP tools, `relay` subcommands, and `POST /v1/
 
 | Operation | Purpose |
 |---|---|
-| `recall <query>` | hybrid search over team memory (graph + pgvector + event log) with provenance |
+| `recall <query>` | hybrid search over team memory (event log + pgvector; graph optional) with provenance and links |
 | `my_items` / `items --assignee` | open action items, with source meeting and status |
 | `events --since --type --thread` | query the event log |
 | `report <text> [--item-id ID] [--link URL]` | publish what I did as an event (source for standups and item closure) |
@@ -83,7 +81,7 @@ The same nine operations exist as MCP tools, `relay` subcommands, and `POST /v1/
 
 ## Principles
 
-1. **The event log is the source of truth.** Graph, projections, digests: all derived, all rebuildable with `relay replay`.
+1. **The event log is the source of truth.** Projections, embeddings, digests: all derived, all rebuildable with `relay replay`. A knowledge graph is optional, and off by default (ADR-0005).
 2. **Relay holds team memory only.** Private memory stays in your agent. Relay stores no LLM keys and proxies no model traffic.
 3. **Delegated, per-user permission.** Agents act under their human's tokens. External writes are approval-gated by default and audit-logged always.
 4. **Per-tool transport.** MCP for SaaS tools and Relay's own surface, CLI for local tooling and headless coding agents, A2A through Relay's broker for agent-to-agent.

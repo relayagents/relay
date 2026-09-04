@@ -51,7 +51,8 @@ Adding a type: add the payload class and include it in `AnyPayload`, add a sampl
 |---|---|---|
 | `events` | **truth** | `seq` bigint cursor, `id` unique, JSON `payload`/`provenance`, `text_index` for lexical search, `embedding vector(1536)` (pgvector; JSON on SQLite), GIN full-text index on Postgres |
 | `action_items`, `decisions` | projection | rebuilt by `relay replay --rebuild-projections` |
-| Graphiti graph (Kuzu file) | projection | rebuilt by `relay replay --rebuild-graph` |
+| pgvector embeddings (`events.embedding`) | projection | rebuilt by `relay replay --rebuild-graph` |
+| knowledge graph | projection, **opt-in** | `RELAY_MEMORY_BACKEND=graphiti-kuzu`; off by default (ADR-0005) |
 | `users` | operational | identity, Slack/GitHub ids, timezone, `standup_mode`, `standup_time` |
 | `api_tokens` | operational | hashed tokens bound to an actor; scopes; expiry; revocation |
 | `device_codes` | operational | `relay login` device flow |
@@ -64,4 +65,6 @@ Migrations live in `src/relayagents/core/migrations` (Alembic, async). `relay mi
 
 ## Search
 
-`recall` runs three legs and merges by score, deduplicated by event id: lexical search over `text_index` (in relay-api), and, through the `semantic_recall` job in relay-workers, pgvector cosine search over event embeddings plus Graphiti graph search (facts with validity intervals and episode ids). The semantic legs live in the workers because they need the team model key, which relay-api never holds. Each hit carries `event_ids` so an agent can cite it. Embeddings are written when events are indexed and rebuilt by `relay replay --rebuild-graph`.
+`recall` runs up to three legs and merges by score, deduplicated by event id: lexical search over `text_index` (in relay-api), pgvector cosine search over event embeddings (through the `semantic_recall` job in relay-workers, which hold the team model key), and, only when the opt-in graph is enabled, graph search. Each hit carries `event_ids`, the event type and actor, its `thread_id`, and `related_ids` (item, decision, question ids, `supersedes`, parent events, source segments), so the asking agent can follow links instead of querying a graph (ADR-0005). Embeddings are written when events are indexed, swept by the `embed_backlog` cron, and rebuilt by `relay replay --rebuild-graph`.
+
+Topic names and `supersedes` links come from the extractor: it is given the known topics and the still-current recent decisions (`ExtractionContext`), reuses a topic when it is the same thing, and names the decision a new one replaces.
