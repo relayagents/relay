@@ -170,6 +170,35 @@ async def create_user_with_tokens(
             raise HTTPException(
                 409, f"user {body.id!r} already exists; pass reissue=true to mint new tokens"
             )
+        if body.slack_user_id:
+            clash = await session.scalar(
+                select(UserRow).where(
+                    UserRow.slack_user_id == body.slack_user_id, UserRow.id != body.id
+                )
+            )
+            if clash is not None:
+                raise HTTPException(
+                    409, f"slack user id {body.slack_user_id!r} is already bound to {clash.id!r}"
+                )
+        if user is not None:
+            changes = {
+                k: v
+                for k, v in body.model_dump(
+                    include={"slack_user_id", "github_login", "email", "timezone"}
+                ).items()
+                if v not in (None, "UTC") and getattr(user, k) != v
+            }
+            for k, v in changes.items():
+                setattr(user, k, v)
+            if changes:
+                await EventStore(session).append(
+                    Event.new(
+                        UserUpdated(user_id=user.id, changes=changes),
+                        actor=issued_by,
+                        source="api",
+                        thread_id=f"user:{user.id}",
+                    )
+                )
         if user is None:
             user = UserRow(
                 id=body.id,
@@ -183,7 +212,7 @@ async def create_user_with_tokens(
             )
             session.add(user)
             await session.flush()
-        via = "admin" if issued_by.id != user.id else "add_user"
+        via = "admin" if body.reissue else "add_user"
         human_token, _ = await mint_token(
             session,
             user_id=user.id,
@@ -360,7 +389,8 @@ async def device_start(body: DeviceStartIn, request: Request) -> dict[str, Any]:
         )
         session.add(row)
         await session.commit()
-        if services.chat is not None:
+        interactive = services.chat is not None and services.chat.supports_actions
+        if interactive:
             blocks = [
                 {
                     "type": "section",
@@ -399,7 +429,7 @@ async def device_start(body: DeviceStartIn, request: Request) -> dict[str, Any]:
             "user_code": row.user_code,
             "expires_in": 600,
             "interval": 3,
-            "slack": services.chat is not None,
+            "slack": interactive,
         }
 
 

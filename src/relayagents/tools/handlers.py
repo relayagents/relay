@@ -23,11 +23,12 @@ from relayagents.core.events import (
     ToolResult,
 )
 from relayagents.core.ids import new_id
+from relayagents.core.indexing import index_later
 from relayagents.core.permissions import is_forbidden, policy_for
 from relayagents.core.projections import apply as project
 from relayagents.core.projections import list_decisions, list_items
 from relayagents.core.protocols import MemoryHit
-from relayagents.core.store import EventStore, parse_since
+from relayagents.core.store import EventStore, event_summary, parse_since
 from relayagents.tools.context import ToolContext
 from relayagents.tools.schemas import (
     ActionItem,
@@ -100,11 +101,7 @@ async def recall(ctx: ToolContext, inp: RecallInput) -> RecallOutput:
 
 
 def _event_summary(event: Event) -> str:
-    p = event.payload.model_dump()
-    for key in ("statement", "text", "title", "action", "answer"):
-        if p.get(key):
-            return f"[{event.type}] {p[key]}"
-    return f"[{event.type}]"
+    return event_summary(event)
 
 
 # ---- items ----------------------------------------------------------------------------------
@@ -166,12 +163,15 @@ async def events(ctx: ToolContext, inp: EventsInput) -> EventsOutput:
 
 
 async def report(ctx: ToolContext, inp: ReportInput) -> ReportOutput:
+    from relayagents.tools.runtime import redact
+
     links = [inp.link] if inp.link else []
+    text = redact(inp.text)
     async with ctx.db.session() as session:
         store = EventStore(session)
         thread = inp.item_id
         ev = Event.new(
-            ReportPosted(text=inp.text, item_id=inp.item_id, links=links),
+            ReportPosted(text=text, item_id=inp.item_id, links=links),
             actor=ctx.actor,
             source=_source_for(ctx),
             thread_id=thread,
@@ -183,9 +183,7 @@ async def report(ctx: ToolContext, inp: ReportInput) -> ReportOutput:
             if not inp.item_id:
                 raise ToolError("close_item requires item_id")
             close = Event.new(
-                ActionItemClosed(
-                    item_id=inp.item_id, resolution="done", note=inp.text, links=links
-                ),
+                ActionItemClosed(item_id=inp.item_id, resolution="done", note=text, links=links),
                 actor=ctx.actor,
                 source=_source_for(ctx),
                 thread_id=thread,
@@ -195,6 +193,7 @@ async def report(ctx: ToolContext, inp: ReportInput) -> ReportOutput:
             await project(session, close)
             closed = inp.item_id
         await session.commit()
+    await index_later(ctx.services, [ev])
     return ReportOutput(event_id=ev.id, closed_item_id=closed)
 
 

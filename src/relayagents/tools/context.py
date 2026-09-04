@@ -32,7 +32,8 @@ class Services:
     # Workers only: hold the team model key.
     memory: MemoryStore | None = None
     embedder: Embedder | None = None
-    # API side: reaches the semantic legs through the job queue.
+    # API side: the job queue (arq pool) and the semantic legs reached through it.
+    queue: Any | None = None
     semantic: SemanticSearch | None = None
     extras: dict[str, Any] = field(default_factory=dict)
 

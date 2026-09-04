@@ -15,10 +15,12 @@ from relayagents.core.config import Settings
 from relayagents.core.db import Database
 from relayagents.core.events import Event
 from relayagents.core.models import EMBEDDING_DIM
+from relayagents.core.protocols import Embedder
 from relayagents.core.store import EventStore, flatten_text
 
 log = structlog.get_logger()
 BATCH = 100
+MAX_CHARS = 6000  # conservative for 8k-token models even on CJK/code
 
 
 class PydanticAIEmbedder:
@@ -33,14 +35,35 @@ class PydanticAIEmbedder:
         self._embedder = Embedder(model, settings=EmbeddingSettings(truncate=True))  # type: ignore[arg-type]
 
     async def embed_query(self, text: str) -> list[float]:
-        result = await self._embedder.embed_query(text)
+        result = await self._embedder.embed_query(text[:MAX_CHARS])
         return _check(list(result.embeddings[0]), self.model_name)
 
-    async def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
-        out: list[list[float]] = []
-        for i in range(0, len(texts), BATCH):
-            result = await self._embedder.embed_documents(list(texts[i : i + BATCH]))
-            out.extend(_check(list(v), self.model_name) for v in result.embeddings)
+    async def embed_documents(self, texts: Sequence[str]) -> list[list[float] | None]:
+        """One vector per input, ``None`` for inputs the model rejected. Providers that ignore
+        ``truncate`` (OpenAI does) get a character cap; a failing batch is retried one by one so a
+        single bad input never costs the other 99."""
+        out: list[list[float] | None] = []
+        clipped = [t[:MAX_CHARS] for t in texts]
+        for i in range(0, len(clipped), BATCH):
+            chunk = clipped[i : i + BATCH]
+            try:
+                result = await self._embedder.embed_documents(chunk)
+                out.extend(_check(list(v), self.model_name) for v in result.embeddings)
+            except ValueError:
+                raise  # wrong dimension: configuration error, not a bad input
+            except Exception as exc:
+                log.warning("embeddings.batch_failed", error=str(exc)[:200], size=len(chunk))
+                for text in chunk:
+                    try:
+                        one = await self._embedder.embed_documents([text])
+                        out.append(_check(list(one.embeddings[0]), self.model_name))
+                    except ValueError:
+                        raise
+                    except Exception as exc_one:
+                        log.warning(
+                            "embeddings.item_failed", error=str(exc_one)[:200], chars=len(text)
+                        )
+                        out.append(None)
         return out
 
 
@@ -69,7 +92,7 @@ def make_embedder(settings: Settings) -> PydanticAIEmbedder | None:
     return PydanticAIEmbedder(name)
 
 
-async def embed_events(db: Database, embedder: object, events: Sequence[Event]) -> int:
+async def embed_events(db: Database, embedder: Embedder, events: Sequence[Event]) -> int:
     """Embed the events that carry text and store the vectors. Returns how many were embedded."""
     from relayagents.connectors.memory import INDEXED_TYPES
 
@@ -77,10 +100,9 @@ async def embed_events(db: Database, embedder: object, events: Sequence[Event]) 
     todo = [(i, t) for i, t in todo if t.strip()]
     if not todo:
         return 0
-    vectors = await embedder.embed_documents([t for _, t in todo])  # type: ignore[attr-defined]
+    vectors = await embedder.embed_documents([t for _, t in todo])
+    pairs = [(i, v) for (i, _), v in zip(todo, vectors, strict=True) if v is not None]
     async with db.session() as session:
-        await EventStore(session).set_embeddings(
-            list(zip([i for i, _ in todo], vectors, strict=True))
-        )
+        await EventStore(session).set_embeddings(pairs)
         await session.commit()
-    return len(todo)
+    return len(pairs)

@@ -106,7 +106,9 @@ class Embedder(Protocol):
 
     async def embed_query(self, text: str) -> list[float]: ...
 
-    async def embed_documents(self, texts: Sequence[str]) -> list[list[float]]: ...
+    async def embed_documents(self, texts: Sequence[str]) -> list[list[float] | None]:
+        """One vector per input; ``None`` where the provider rejected that input."""
+        ...
 
 
 @runtime_checkable
@@ -146,6 +148,10 @@ class OfficeSuite(Protocol):
 @runtime_checkable
 class ChatApp(Protocol):
     """The team chat where humans see what agents do. Reference: Slack via one Socket Mode app."""
+
+    supports_actions: bool
+    """True when button clicks can reach Relay (Slack Socket Mode connected). If False, messages
+    must tell the human how to act from the CLI instead of offering buttons."""
 
     async def post(
         self,

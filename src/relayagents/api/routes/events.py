@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from relayagents.api.auth import current_principal, get_services
 from relayagents.core.events import EVENT_TYPES, Event
+from relayagents.core.indexing import index_later
 from relayagents.core.projections import apply as project
 from relayagents.core.store import EventStore, parse_since
 from relayagents.tools.context import Principal, Services
@@ -72,6 +73,7 @@ async def append_event(
         await EventStore(session).append(event)
         await project(session, event)
         await session.commit()
+    await index_later(services, [event])
     return event
 
 

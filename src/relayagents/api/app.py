@@ -38,7 +38,10 @@ def build_services(
     if settings.slack_enabled:
         from relayagents.connectors.slack import SlackChatApp
 
-        services.chat = SlackChatApp(settings.slack_bot_token, db)
+        # Buttons only work when the API holds the Socket Mode connection (app token).
+        services.chat = SlackChatApp(
+            settings.slack_bot_token, db, supports_actions=settings.slack_socket_mode_enabled
+        )
     if settings.workspace_mcp_url:
         from relayagents.connectors.workspace import WorkspaceMCP
 
@@ -75,6 +78,7 @@ def create_app(settings: Settings | None = None, *, services: Services | None = 
             except Exception as exc:
                 log.warning("redis.unavailable", error=str(exc))
         app.state.redis = redis
+        services.queue = redis
         if redis is not None and services.semantic is None:
             from relayagents.connectors.memory.search import ArqSemanticSearch
 

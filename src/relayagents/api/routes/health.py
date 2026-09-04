@@ -34,5 +34,6 @@ async def health(request: Request) -> dict[str, Any]:
         "db": db_ok,
         "redis": redis_ok,
         "slack": services.chat is not None,
-        "memory": services.settings.memory_backend if services.memory else "none",
+        "workspace_mcp": services.office is not None,
+        "semantic_recall": services.semantic is not None,
     }

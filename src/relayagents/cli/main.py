@@ -471,6 +471,49 @@ def standup_submit(
     _echo_json(c.post("/v1/standups", json.loads(draft_file.read_text())))
 
 
+# ---- approvals -----------------------------------------------------------------------------------
+
+approvals_app = typer.Typer(
+    help="Approvals requested of you (the Slack buttons are the usual path)."
+)
+app.add_typer(approvals_app, name="approvals")
+
+
+@approvals_app.command("list")
+def approvals_list(
+    status: Annotated[
+        str, typer.Option(help="pending | approved | denied | expired | all")
+    ] = "pending",
+) -> None:
+    rows = _client().get("/v1/approvals", status=status)
+    if not rows:
+        typer.echo(f"no {status} approvals")
+        return
+    for r in rows:
+        typer.echo(f"{r['id']}  [{r['status']:<8}] {r['requester']:<20} {r['action'][:80]}")
+
+
+@approvals_app.command("approve")
+def approvals_approve(
+    approval_id: str,
+    edit: Annotated[
+        str | None, typer.Option(help="Replace the action text before approving")
+    ] = None,
+) -> None:
+    _echo_json(
+        _client().post(
+            f"/v1/approvals/{approval_id}/resolve", {"decision": "approved", "edited_action": edit}
+        )
+    )
+
+
+@approvals_app.command("deny")
+def approvals_deny(approval_id: str, note: Annotated[str | None, typer.Option()] = None) -> None:
+    _echo_json(
+        _client().post(f"/v1/approvals/{approval_id}/resolve", {"decision": "denied", "note": note})
+    )
+
+
 # ---- replay / serve / worker / migrate (node-side) ---------------------------------------------
 
 
@@ -486,7 +529,10 @@ def replay(
         ),
     ] = False,
 ) -> None:
-    """Rebuild derived stores from the event log. Proves the log is the source of truth."""
+    """Rebuild derived stores from the event log. Proves the log is the source of truth.
+
+    Runs where the team key and graph volume live: `docker compose exec relay-workers relay replay`.
+    """
     from relayagents.api.app import build_services
     from relayagents.core import projections
     from relayagents.core.config import get_settings

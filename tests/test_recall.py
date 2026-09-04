@@ -201,7 +201,7 @@ async def test_embed_events_writes_vectors_by_id(services) -> None:  # type: ign
     async with services.db.session() as session:
         from sqlalchemy import select
 
-        rows = {r.id: r.embedding for r in (await session.scalars(select(EventRow))).all()}
+        rows = dict((await session.execute(select(EventRow.id, EventRow.embedding))).all())
         assert rows[a.id] is not None and len(rows[a.id]) == EMBEDDING_DIM and rows[b.id] is None
 
 
@@ -222,10 +222,10 @@ async def test_rebuild_clears_and_reindexes_and_fails_loudly(services) -> None: 
     assert await rebuild_graph({"services": services}) == 1
     assert services.memory.resets == 1 and [e.id for e in services.memory.indexed] == [ev.id]
     async with services.db.session() as session:
-        row = await session.scalar(
-            __import__("sqlalchemy").select(EventRow).where(EventRow.id == ev.id)
-        )
-        assert row is not None and row.embedding[0] == 1.0  # re-derived, not the stale vector
+        from sqlalchemy import select
+
+        vec = await session.scalar(select(EventRow.embedding).where(EventRow.id == ev.id))
+        assert vec is not None and vec[0] == 1.0  # re-derived, not the stale vector
     services.memory = FakeMemory(fail=True)
     with pytest.raises(RuntimeError, match="graph backend down"):
         await rebuild_graph({"services": services})
