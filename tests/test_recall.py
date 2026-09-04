@@ -274,3 +274,25 @@ async def test_recall_hits_carry_structural_links(client: httpx.AsyncClient, tea
         and "item_z" in closed["related_ids"]
         and any(r.startswith("evt_") for r in closed["related_ids"])
     )
+
+
+async def test_recall_hits_include_cited_and_tool_links(
+    client: httpx.AsyncClient, team, services
+) -> None:  # type: ignore[no-untyped-def]
+    from relayagents.workers.digest import post_digest
+
+    await client.post(
+        f"{TOOLS_PREFIX}/report",
+        json={"text": "shipped the reranker", "item_id": "item_r", "close_item": True},
+        headers=auth(team["grace"]["agent"]),
+    )
+    ev = await post_digest(services)
+    hits = (
+        await client.post(
+            f"{TOOLS_PREFIX}/recall",
+            json={"query": "shipped reranker", "kinds": ["event"]},
+            headers=auth(team["ada"]["human"]),
+        )
+    ).json()["hits"]
+    digest = next(h for h in hits if h["event_type"] == "digest.posted")
+    assert set(ev.payload.cited_event_ids) <= set(digest["related_ids"])  # type: ignore[attr-defined]

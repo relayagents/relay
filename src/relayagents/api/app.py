@@ -51,12 +51,17 @@ def build_services(
 
         services.embedder = make_embedder(settings)
         if settings.memory_backend == "graphiti-kuzu":
-            try:
+            import importlib.util
+
+            if importlib.util.find_spec("graphiti_core") is None:
+                log.warning(
+                    "memory.unavailable",
+                    reason="graphiti_core is not installed; build the image with RELAY_EXTRAS='--extra graph'",
+                )
+            else:
                 from relayagents.connectors.memory import GraphitiKuzuMemory
 
                 services.memory = GraphitiKuzuMemory(settings)
-            except ImportError as exc:  # optional extra; recall degrades to event search
-                log.warning("memory.unavailable", error=str(exc))
     return services
 
 

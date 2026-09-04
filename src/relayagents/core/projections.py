@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relayagents.core.events import (
@@ -113,8 +113,11 @@ async def list_decisions(
     topic: str | None = None,
     since: datetime | None = None,
     limit: int = 50,
+    current_only: bool = False,
 ) -> list[DecisionRow]:
     stmt = select(DecisionRow)
+    if current_only:
+        stmt = stmt.where(DecisionRow.superseded_by.is_(None))
     if topic:
         stmt = stmt.where(
             (DecisionRow.topic.ilike(f"%{topic}%")) | (DecisionRow.statement.ilike(f"%{topic}%"))
@@ -123,6 +126,18 @@ async def list_decisions(
         stmt = stmt.where(DecisionRow.decided_at >= since)
     stmt = stmt.order_by(DecisionRow.decided_at.desc()).limit(limit)
     return list((await session.scalars(stmt)).all())
+
+
+async def distinct_topics(session: AsyncSession, *, limit: int = 500) -> list[str]:
+    """Topic names in use, most recently decided first."""
+    stmt = (
+        select(DecisionRow.topic, func.max(DecisionRow.decided_at).label("last"))
+        .where(DecisionRow.topic.isnot(None))
+        .group_by(DecisionRow.topic)
+        .order_by(func.max(DecisionRow.decided_at).desc())
+        .limit(limit)
+    )
+    return [t for t, _ in (await session.execute(stmt)).all()]
 
 
 def utcnow() -> datetime:
