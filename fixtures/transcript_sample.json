@@ -1,0 +1,17 @@
+{
+  "meeting_id": "mtg_fixture",
+  "language": "en",
+  "engine": "fixture",
+  "segments": [
+    {"segment_id": "seg_0001", "speaker": "ada", "start_s": 0.0, "end_s": 6.2, "text": "Okay, quick sync on the retrieval eval. Grace, where are we on the benchmark harness?"},
+    {"segment_id": "seg_0002", "speaker": "grace", "start_s": 6.2, "end_s": 15.9, "text": "The harness runs end to end on the small split. The numbers are noisy because we re-embed every run. I'd like to cache embeddings."},
+    {"segment_id": "seg_0003", "speaker": "linus", "start_s": 15.9, "end_s": 21.4, "text": "Agreed, that also makes the nightly cheaper. Any objection to pgvector for the cache rather than a flat file?"},
+    {"segment_id": "seg_0004", "speaker": "ada", "start_s": 21.4, "end_s": 27.0, "text": "No objection. Decision: we cache embeddings in pgvector, keyed by model name and content hash."},
+    {"segment_id": "seg_0005", "speaker": "grace", "start_s": 27.0, "end_s": 33.8, "text": "Action: grace will add the embedding cache table and the migration by Friday."},
+    {"segment_id": "seg_0006", "speaker": "linus", "start_s": 33.8, "end_s": 41.2, "text": "Linus will wire the nightly eval to read from the cache once the table lands."},
+    {"segment_id": "seg_0007", "speaker": "ada", "start_s": 41.2, "end_s": 49.5, "text": "One more thing. The reviewers asked for a human baseline. Question for linus: do we have budget for a hundred annotated queries?"},
+    {"segment_id": "seg_0008", "speaker": "linus", "start_s": 49.5, "end_s": 54.1, "text": "I'll check the grant line and get back to you. Let's not decide today."},
+    {"segment_id": "seg_0009", "speaker": "ada", "start_s": 54.1, "end_s": 60.0, "text": "Fine. Also, decision: the paper deadline stays at October 3, no extension request."},
+    {"segment_id": "seg_0010", "speaker": "grace", "start_s": 60.0, "end_s": 63.5, "text": "Got it. That's everything from me."}
+  ]
+}
