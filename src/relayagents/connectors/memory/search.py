@@ -19,10 +19,6 @@ from relayagents.core.store import EventStore, event_summary
 log = structlog.get_logger()
 
 
-def _summary(event: Any) -> str:
-    return event_summary(event)
-
-
 async def semantic_search(
     services: Any, query: str, *, limit: int = 10, kinds: Sequence[str] = ("vector", "graph")
 ) -> list[MemoryHit]:
@@ -35,7 +31,7 @@ async def semantic_search(
                 for event, score in await EventStore(session).vector_search(vec, limit=limit):
                     hits.append(
                         MemoryHit(
-                            text=_summary(event),
+                            text=event_summary(event),
                             score=round(score, 3),
                             kind="vector",
                             event_ids=[event.id],

@@ -74,7 +74,7 @@ async def recall(ctx: ToolContext, inp: RecallInput) -> RecallOutput:
             ):
                 hits.append(
                     MemoryHit(
-                        text=_event_summary(event),
+                        text=event_summary(event),
                         score=round(score, 3),
                         kind="event",
                         event_ids=[event.id],
@@ -98,10 +98,6 @@ async def recall(ctx: ToolContext, inp: RecallInput) -> RecallOutput:
             best[key] = h
     ordered = sorted(best.values(), key=lambda h: h.score, reverse=True)[: inp.limit]
     return RecallOutput(hits=ordered)
-
-
-def _event_summary(event: Event) -> str:
-    return event_summary(event)
 
 
 # ---- items ----------------------------------------------------------------------------------
