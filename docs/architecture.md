@@ -1,0 +1,65 @@
+# Architecture
+
+Relay is a coordination substrate for a small team where each person runs their own agent. It is a
+switchboard and a shared memory, not an agent. This page covers the components, the deployment
+topology, and the two vertical slices.
+
+## Components
+
+| Service | Role | Image |
+|---|---|---|
+| `relay-api` | FastAPI: REST, the Relay MCP server (streamable HTTP, bearer tokens issued by Relay), the A2A broker, the Slack Socket Mode client | `ghcr.io/relayagents/relay` |
+| `relay-workers` | arq on Redis: transcript extraction, PM dispatch, graph indexing, daily digest | same image, `workers` command |
+| `relay-ingest` | arq on the `relay:ingest` queue: WhisperX + pyannote. CPU on the node, or GPU elsewhere | `ghcr.io/relayagents/relay-ingest` |
+| `postgres` | Postgres 16 + pgvector. The `events` table is the source of truth | `pgvector/pgvector:pg16` |
+| `redis` | Job queue | `redis:7` |
+| `workspace-mcp` | Google Workspace MCP server with per-user OAuth 2.1 | `ghcr.io/taylorwilsdon/google_workspace_mcp` |
+| `caddy` | TLS for `relay.relayagents.dev` or a tailnet name | `caddy:2` |
+| agent pool | one `relay-hermes-<user>` container per teammate (own volume), plus `relay-sandbox` for headless coding-agent runs | `ghcr.io/relayagents/relay-hermes`, `relay-sandbox` |
+
+Everything in `src/relayagents`:
+
+```
+core/        events (schema), protocols, models (SQLAlchemy), store (EventStore), projections, approvals, permissions
+tools/       registry (the one definition) → mcp.py, rest.py, cli.py generators
+api/         app factory, auth, routes/, a2a_broker/, slack/, mcp_server (via tools/mcp.py)
+workers/     extraction, pm, digest, standup, jobs, main (arq)
+ingest/      whisperx_transcriber, fixture, worker (arq, separate queue)
+connectors/  slack, github (gh), coding_agents (CLI in sandbox), hermes (provisioning), workspace (MCP client), memory (Graphiti+Kuzu)
+cli/         `relay` (typer) and the HTTP client
+```
+
+## Data flow
+
+1. **Ingest.** `relay meeting upload` posts audio or a transcript JSON to `POST /v1/meetings`. Audio is queued on `relay:ingest`; the worker writes `transcript.json` and re-queues `extract_meeting` on the default queue.
+2. **Extraction.** `extract_meeting` appends `transcript.segment` events, runs the extractor (Pydantic AI structured output, or the deterministic keyword extractor), and appends `decision.made`, `action_item.created`, `question.opened` events, each with `provenance.segment_ids`. Projections (`action_items`, `decisions`) update in the same transaction.
+3. **PM.** The same job posts a summary to the team Slack channel and sends one A2A task per assigned item to the assignee's agent through the broker. Relay's PM has no credentials of its own.
+4. **Agents.** Each Hermes container long-polls `GET /a2a/inbox`. For an action item it typically calls `request_approval` (the human clicks in Slack), runs `gh issue create` with the human's token, then invokes a coding agent in the sandbox. The coding agent talks to Relay over MCP (`my_items`, `report`).
+5. **Memory.** Workers index events into Graphiti (Kuzu file in the workers volume). `recall` merges graph hits, pgvector hits, and event-log keyword hits, each with event ids.
+6. **Daily updates.** The Hermes bridge runs `relay standup draft` at the user's time, lets Hermes reword it without adding facts, and submits. Mode `draft` DMs a Block Kit draft; `auto` posts with attribution; `off` does nothing. A worker posts the team digest after the window.
+7. **Replay.** `relay replay --rebuild-graph --rebuild-projections` truncates derived stores and re-applies every event.
+
+## Deployment topology
+
+- **Relay node**: one VPS or lab machine (4 vCPU, 8–16 GB), joined to Tailscale. Runs everything in `docker-compose.yml`. Postgres and Redis bind to `RELAY_BIND_IP` (loopback by default; set it to the node's Tailscale IP to let a GPU worker in).
+- **GPU worker (optional)**: any machine on the tailnet with an NVIDIA GPU runs `docker-compose.gpu.yml` with `RELAY_REDIS_URL`/`RELAY_DATABASE_URL` pointing at the node. It consumes the same `relay:ingest` queue; stop the node's CPU `relay-ingest` to route everything to the GPU. Audio files must be reachable from both (share the `relaydata` volume via a synced folder; v1 does not stream audio between nodes).
+- **Laptops**: the `relay` CLI, an MCP config written by `relay setup-agent`, and optional audio capture (Meetily, or any recorder plus `relay meeting upload`).
+- **External**: one Slack app in Socket Mode (no inbound URL), Google via `workspace-mcp` with per-user OAuth, GitHub via `gh` with user tokens, model providers called directly by each agent. The only model key Relay itself holds is the team key used by workers for extraction and embeddings.
+
+## Auth
+
+`relay login` runs a device flow: the CLI asks `POST /v1/auth/device`, Relay DMs the user in Slack with Approve/Deny buttons, the CLI polls and stores the token in `~/.config/relay/credentials.json`. Without Slack, an admin runs `relay admin approve-login <code>` on the node. Tokens are opaque, hashed with SHA-256 plus an optional pepper, and bound to one actor: the human (`ada`) or one of their agents (`ada.hermes`, `ada.claude-code`). The MCP server verifies the same tokens as OAuth 2.1 bearer tokens.
+
+## Vertical slice 1: meeting → action → code
+
+Covered by `tests/test_extraction.py::test_extract_meeting_job_end_to_end`, `tests/test_a2a.py`, and `tests/test_approvals.py`. Run it for real with:
+
+```bash
+relay meeting upload --transcript fixtures/transcript_sample.json --skip-asr --participants ada,grace,linus
+relay events --since 1h --thread <meeting id>
+relay items --assignee grace
+```
+
+## Vertical slice 2: daily updates on behalf of each teammate
+
+Covered by `tests/test_slices.py`. The bridge in `deploy/docker/hermes/relay_bridge.py` is the cron; `relay me --standup-mode auto|draft|off` sets the mode.
