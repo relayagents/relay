@@ -26,7 +26,9 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 # pgvector on Postgres, JSON on SQLite (tests / tiny dev). 1536 = text-embedding-3-small.
-EmbeddingType = Vector(1536).with_variant(JSON(), "sqlite")
+# Changing this needs a migration; the embedder validates vectors against it.
+EMBEDDING_DIM = 1536
+EmbeddingType = Vector(EMBEDDING_DIM).with_variant(JSON(), "sqlite")
 
 
 class TZDateTime(TypeDecorator[datetime]):
@@ -78,7 +80,7 @@ class UserRow(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     display_name: Mapped[str] = mapped_column(String(128))
     email: Mapped[str | None] = mapped_column(String(256), nullable=True)
-    slack_user_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    slack_user_id: Mapped[str | None] = mapped_column(String(32), nullable=True, unique=True)
     github_login: Mapped[str | None] = mapped_column(String(64), nullable=True)
     timezone: Mapped[str] = mapped_column(String(64), default="UTC")
     standup_mode: Mapped[str] = mapped_column(String(8), default="draft")  # draft | auto | off
