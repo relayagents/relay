@@ -11,6 +11,7 @@ import structlog
 from relayagents.core.events import Actor, Event, TranscriptSegment
 from relayagents.core.models import MeetingRow
 from relayagents.core.projections import apply as project
+from relayagents.core.projections import distinct_topics, list_decisions
 from relayagents.core.protocols import ExtractionContext, RecentDecision, Transcript
 from relayagents.core.store import EventStore
 from relayagents.tools.context import Services
@@ -91,21 +92,14 @@ async def extract_meeting(ctx: dict[str, Any], meeting_id: str) -> dict[str, Any
 
 
 async def extraction_context(session: Any, *, recent: int = 50) -> ExtractionContext:
-    """Known topics and recent, still-current decisions from the projections. This replaces the
+    """Known topics and the still-current recent decisions from the projections. This replaces the
     knowledge graph's two real jobs, topic resolution and supersedes detection (ADR-0005)."""
-    from relayagents.core.projections import list_decisions
-
-    rows = await list_decisions(session, limit=recent)
-    topics: list[str] = []
-    for r in rows:
-        if r.topic and r.topic not in topics:
-            topics.append(r.topic)
+    rows = await list_decisions(session, limit=recent, current_only=True)
     return ExtractionContext(
-        known_topics=topics,
+        known_topics=await distinct_topics(session),
         recent_decisions=[
             RecentDecision(decision_id=r.id, topic=r.topic, statement=r.statement)
             for r in reversed(rows)  # oldest first, so "most recent" is last
-            if r.superseded_by is None
         ],
     )
 

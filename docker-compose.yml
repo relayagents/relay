@@ -68,6 +68,8 @@ services:
     build:
       context: .
       dockerfile: deploy/docker/relay/Dockerfile
+      args:
+        RELAY_EXTRAS: ${RELAY_EXTRAS:-}
     command: ["api"]
     environment:
       <<: *relay-env
@@ -85,6 +87,8 @@ services:
     build:
       context: .
       dockerfile: deploy/docker/relay/Dockerfile
+      args:
+        RELAY_EXTRAS: ${RELAY_EXTRAS:-}
     command: ["workers"]
     environment:
       <<: [*relay-env, *team-keys]

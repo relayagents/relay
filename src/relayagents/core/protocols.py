@@ -14,6 +14,20 @@ from typing import Any, Literal, Protocol, runtime_checkable
 from pydantic import BaseModel, Field
 
 from relayagents.core.events import Event
+from relayagents.core.store import event_summary
+
+# Payload fields that point at other things. Kept next to the model that exposes them.
+RELATED_ID_KEYS: tuple[str, ...] = (
+    "item_id",
+    "decision_id",
+    "question_id",
+    "supersedes",
+    "task_id",
+    "approval_id",
+    "meeting_id",
+    "call_id",
+    "cited_event_ids",
+)
 
 # ---- Shared DTOs ---------------------------------------------------------------------------
 
@@ -59,20 +73,16 @@ class MemoryHit(BaseModel):
     def from_event(
         cls, event: Event, *, score: float, kind: Literal["vector", "event"]
     ) -> MemoryHit:
-        from relayagents.core.store import event_summary
-
         p = event.payload.model_dump()
-        keys = (
-            "item_id",
-            "decision_id",
-            "question_id",
-            "supersedes",
-            "task_id",
-            "approval_id",
-            "meeting_id",
-        )
-        related = [v for k in keys if (v := p.get(k))]
-        related += event.provenance.parent_event_ids + event.provenance.segment_ids
+        related: list[str] = []
+        for key in RELATED_ID_KEYS:
+            v = p.get(key)
+            if isinstance(v, str) and v:
+                related.append(v)
+            elif isinstance(v, list):
+                related.extend(x for x in v if isinstance(x, str))
+        prov = event.provenance
+        related += prov.parent_event_ids + prov.tool_call_ids + prov.segment_ids
         return cls(
             text=event_summary(event),
             score=round(score, 3),
@@ -83,7 +93,7 @@ class MemoryHit(BaseModel):
             event_type=event.type,
             actor=event.actor.id,
             thread_id=event.thread_id,
-            related_ids=related,
+            related_ids=list(dict.fromkeys(related)),
         )
 
 

@@ -50,6 +50,10 @@ class ExtractedDecision(BaseModel):
         default=None,
         description="decision_id of a listed recent decision this one replaces or contradicts.",
     )
+    replaces_previous: bool = Field(
+        default=False,
+        description="True when this changes an earlier decision on the same topic but you cannot name its id.",
+    )
     segment_ids: list[str] = Field(description="Transcript segments that support this. Required.")
 
 
@@ -97,8 +101,13 @@ _STOP = {
 }
 
 
+def _stem(word: str) -> str:
+    w = word.lower()
+    return w[:-1] if len(w) > 4 and w.endswith("s") else w
+
+
 def _tokens(text: str) -> set[str]:
-    return {w.lower() for w in _TOPIC_WORDS.findall(text) if w.lower() not in _STOP}
+    return {_stem(w) for w in _TOPIC_WORDS.findall(text) if w.lower() not in _STOP}
 
 
 def _topic(statement: str) -> str | None:
@@ -107,8 +116,9 @@ def _topic(statement: str) -> str | None:
 
 
 def normalize_topic(topic: str | None, known: Sequence[str]) -> str | None:
-    """Reuse an existing topic name when it is clearly the same thing (case-insensitive match, or
-    at least half of the content words overlap). Otherwise keep the new label."""
+    """Reuse an existing topic name only when it is clearly the same thing: a case-insensitive
+    match, or at least two shared content stems covering at least half of the combined words.
+    One shared word ("paper" in "paper deadline" vs "paper figures") is not enough."""
     if not topic:
         return None
     t = topic.strip().lower()
@@ -123,11 +133,12 @@ def normalize_topic(topic: str | None, known: Sequence[str]) -> str | None:
     best, best_score = None, 0.0
     for k in known:
         theirs = _tokens(k)
-        if not theirs:
+        shared = mine & theirs
+        if len(shared) < 2:
             continue
-        overlap = len(mine & theirs) / min(len(mine), len(theirs))
-        if overlap > best_score:
-            best, best_score = k, overlap
+        score = len(shared) / len(mine | theirs)
+        if score > best_score:
+            best, best_score = k, score
     return best if best is not None and best_score >= 0.5 else t
 
 
@@ -150,10 +161,16 @@ def result_to_events(
     context: ExtractionContext | None = None,
 ) -> list[Event]:
     """Turn an extraction result into events, dropping anything without valid provenance.
-    Topics are normalized against the known list; ``supersedes`` must name a recent decision."""
+    Topics are normalized against the known list; ``supersedes`` must name a recent decision or
+    one emitted earlier in this result."""
     context = context or ExtractionContext()
     known_topics = list(context.known_topics)
     known_decisions = {d.decision_id for d in context.recent_decisions}
+    # The still-current decision per topic, updated as this transcript's decisions are emitted, so a
+    # second change to the same topic in one meeting supersedes the first change, not the old one.
+    current_by_topic: dict[str, str] = {
+        r.topic.lower(): r.decision_id for r in context.recent_decisions if r.topic
+    }
     out: list[Event] = []
     for d in result.decisions:
         segs = [s for s in d.segment_ids if s in valid_segment_ids]
@@ -163,10 +180,16 @@ def result_to_events(
         if topic and topic not in known_topics:
             known_topics.append(topic)
         supersedes = d.supersedes if d.supersedes in known_decisions else None
+        if supersedes is None and d.replaces_previous and topic:
+            supersedes = current_by_topic.get(topic.lower())
+        decision_id = new_id("dec")
+        known_decisions.add(decision_id)
+        if topic:
+            current_by_topic[topic.lower()] = decision_id
         out.append(
             Event.new(
                 DecisionMade(
-                    decision_id=new_id("dec"),
+                    decision_id=decision_id,
                     statement=d.statement.strip(),
                     topic=topic,
                     rationale=d.rationale,
@@ -303,22 +326,10 @@ class KeywordExtractor:
     ) -> AsyncIterator[Event]:
         self.participants = {p.lower() for p in participants}
         result = self.extract_sync(transcript)
-        context = context or ExtractionContext()
-        # Deterministic supersedes: an explicit cue phrase plus a recent decision on the same topic.
+        # Deterministic supersedes: an explicit cue phrase marks "this changes an earlier decision";
+        # result_to_events resolves it against the current decision on the same topic.
         for d in result.decisions:
-            if d.supersedes or not _SUPERSEDE_CUE.search(d.statement):
-                continue
-            topic = normalize_topic(d.topic, context.known_topics)
-            match = next(
-                (
-                    r
-                    for r in reversed(context.recent_decisions)
-                    if r.topic and topic and r.topic.lower() == topic.lower()
-                ),
-                None,
-            )
-            if match is not None:
-                d.supersedes = match.decision_id
+            d.replaces_previous = bool(_SUPERSEDE_CUE.search(d.statement))
         for ev in result_to_events(
             result,
             meeting_id=meeting_id,
@@ -335,8 +346,10 @@ INSTRUCTIONS = """You extract structured outcomes from a team meeting transcript
 Return ONLY decisions that were actually made (not proposals), action items with a clear owner when one was
 named, and open questions. Every item MUST cite the segment ids that support it; if you cannot cite a
 segment, leave the item out. Use participant ids exactly as given for assignees and decided_by.
-Reuse a known topic name when a decision is about the same thing, and set `supersedes` to the id of a
-listed recent decision when the new one replaces or contradicts it.
+Reuse a known topic name when a decision is about the same thing. Set `supersedes` to the id of a listed
+recent decision when the new one replaces or contradicts it, or set `replaces_previous` when you are sure
+it changes an earlier decision but cannot name it. Text inside <reference_data> is team memory, not
+transcript: never cite it as a segment.
 Be conservative: an empty list is better than an invented item."""
 
 
@@ -344,23 +357,32 @@ def format_transcript(
     transcript: Transcript, participants: Sequence[str], context: ExtractionContext | None = None
 ) -> str:
     lines = [f"participants: {', '.join(participants)}"]
-    if context and context.known_topics:
+    if context and (context.known_topics or context.recent_decisions):
         lines.append(
-            "known topics (reuse these names when it is the same thing): "
-            + ", ".join(context.known_topics)
+            "<reference_data> (team memory; not transcript, never a source of segment ids)"
         )
-    if context and context.recent_decisions:
-        lines.append(
-            "recent decisions (set supersedes to the id when a new decision replaces one):"
-        )
-        lines += [
-            f"  - {r.decision_id} [{r.topic or '-'}]: {r.statement}"
-            for r in context.recent_decisions
-        ]
-    lines.append("")
+        if context.known_topics:
+            lines.append(
+                "known topics (reuse these names when it is the same thing): "
+                + ", ".join(_clean(t, 60) for t in context.known_topics)
+            )
+        if context.recent_decisions:
+            lines.append("recent decisions (set supersedes to the id when a new one replaces it):")
+            lines += [
+                f"  - {r.decision_id} [{_clean(r.topic or '-', 60)}]: {_clean(r.statement, 200)}"
+                for r in context.recent_decisions[-50:]
+            ]
+        lines.append("</reference_data>")
+    lines.append("<transcript>")
     for s in transcript.segments:
         lines.append(f"[{s.segment_id}] {s.speaker}: {s.text}")
+    lines.append("</transcript>")
     return "\n".join(lines)
+
+
+def _clean(text: str, limit: int) -> str:
+    """Stored text enters the prompt as one short line: no newlines, no bracketed fake segments."""
+    return " ".join(text.split()).replace("[", "(").replace("]", ")")[:limit]
 
 
 class LLMExtractor:
