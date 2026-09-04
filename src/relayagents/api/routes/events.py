@@ -15,13 +15,26 @@ from relayagents.tools.context import Principal, Services
 
 router = APIRouter(prefix="/v1/events", tags=["events"])
 
+# Types an agent or human may publish directly. Everything else is produced by Relay itself
+# (ingest, extraction, broker, approvals, standups, digests, tokens) and would be a forgery here.
+PUBLISHABLE_TYPES: frozenset[str] = frozenset(
+    {
+        "report.posted",
+        "question.opened",
+        "question.answered",
+        "action_item.created",
+        "action_item.updated",
+        "action_item.closed",
+        "decision.made",
+    }
+)
+
 
 class AppendIn(BaseModel):
-    """An event minus the fields Relay sets: id, ts, actor (from the token)."""
+    """An event minus the fields Relay sets: id, ts, actor (from the token), source."""
 
     type: str | None = None
     payload: dict[str, Any]
-    source: str = "api"
     visibility: str = "team"
     thread_id: str | None = None
     provenance: dict[str, Any] | None = None
@@ -33,15 +46,21 @@ async def append_event(
     principal: Annotated[Principal, Depends(current_principal)],
     services: Annotated[Services, Depends(get_services)],
 ) -> Event:
-    if body.type and body.type not in EVENT_TYPES:
-        raise HTTPException(400, f"unknown event type {body.type!r}")
+    etype = body.type or body.payload.get("type")
+    if etype not in EVENT_TYPES:
+        raise HTTPException(400, f"unknown event type {etype!r}")
+    if etype not in PUBLISHABLE_TYPES:
+        raise HTTPException(
+            403,
+            f"{etype} events are produced by Relay, not published by callers; allowed: {', '.join(sorted(PUBLISHABLE_TYPES))}",
+        )
     try:
         event = Event.model_validate(
             {
-                "type": body.type,
+                "type": etype,
                 "payload": body.payload,
                 "actor": principal.actor.model_dump(),
-                "source": body.source,
+                "source": "api",
                 "visibility": body.visibility,
                 "thread_id": body.thread_id,
                 "provenance": body.provenance or {},

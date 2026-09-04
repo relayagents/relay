@@ -14,6 +14,7 @@ from relayagents.api.routes.users import AddUserIn, create_user_with_tokens
 from relayagents.connectors.slack.chat import RecordingChatApp
 from relayagents.core.config import Settings
 from relayagents.core.db import Database
+from relayagents.core.events import Actor
 from relayagents.tools.context import Services
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
@@ -59,6 +60,7 @@ async def team(services: Services) -> dict[str, dict[str, str]]:
             AddUserIn(
                 id=uid, display_name=uid.title(), is_admin=admin, slack_user_id=f"U{uid.upper()}"
             ),
+            issued_by=Actor.system("relay.test"),
         )
         out[uid] = {"human": r.human_token, "agent": r.agent_token, "agent_id": r.agent_id}
     return out

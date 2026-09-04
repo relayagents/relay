@@ -22,7 +22,7 @@ from relayagents.api.a2a_broker.types import (
     TaskState,
     TaskStatus,
 )
-from relayagents.core.events import Actor, AgentMessage, Event, Provenance
+from relayagents.core.events import Actor, AgentMessage, AgentRegistered, Event, Provenance
 from relayagents.core.ids import new_id
 from relayagents.core.models import A2ATaskRow, AgentRow
 from relayagents.core.projections import apply as project
@@ -41,9 +41,18 @@ async def register_agent(
     harness: str,
     card: AgentCard,
     push_url: str | None = None,
+    by: Actor | None = None,
 ) -> AgentRow:
     row = await session.get(AgentRow, agent_id)
     now = datetime.now(UTC)
+    await EventStore(session).append(
+        Event.new(
+            AgentRegistered(agent_id=agent_id, user_id=user_id, harness=harness, push_url=push_url),
+            actor=by or Actor.human(user_id),
+            source="a2a",
+            thread_id=f"agent:{agent_id}",
+        )
+    )
     if row is None:
         row = AgentRow(
             id=agent_id,
@@ -117,7 +126,18 @@ async def send_message(
     context_id = message.context_id or new_id("thr")
     message.task_id = task_id
     message.context_id = context_id
+    message.role = "user"  # whoever sends *to* an agent is the "user" side of that task
     row = await session.get(A2ATaskRow, task_id)
+    if row is not None:
+        # Continuing an existing task: only its original sender (or that sender's human/agents)
+        # may append, and only through the agent it was addressed to.
+        origin_user = row.from_agent.split(".", 1)[0]
+        if row.to_agent != to_agent or (
+            from_actor.id != row.from_agent and from_actor.user_id != origin_user
+        ):
+            raise BrokerError(f"task {task_id!r} belongs to another conversation")
+        context_id = row.context_id
+        message.context_id = context_id
     if row is None:
         row = A2ATaskRow(
             id=task_id,

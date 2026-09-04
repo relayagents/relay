@@ -16,7 +16,9 @@ class SlackChatApp:
     def __init__(self, bot_token: str, db: Database) -> None:
         self.client = AsyncWebClient(token=bot_token)
         self.db = db
-        self._dm_cache: dict[str, str] = {}
+        self._dm_cache: dict[
+            str, str
+        ] = {}  # keyed by Slack user id, so a rebinding takes effect at once
 
     async def _slack_user(self, user_id: str) -> str:
         async with self.db.session() as session:
@@ -28,12 +30,12 @@ class SlackChatApp:
         return row.slack_user_id
 
     async def _dm_channel(self, user_id: str) -> str:
-        if user_id in self._dm_cache:
-            return self._dm_cache[user_id]
         slack_user = await self._slack_user(user_id)
+        if slack_user in self._dm_cache:
+            return self._dm_cache[slack_user]
         resp = await self.client.conversations_open(users=[slack_user])
         channel = resp["channel"]["id"]
-        self._dm_cache[user_id] = channel
+        self._dm_cache[slack_user] = channel
         return channel
 
     async def post(

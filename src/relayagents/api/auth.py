@@ -41,9 +41,14 @@ async def mint_token(
     actor: Actor,
     label: str,
     settings: Settings,
+    issued_by: Actor,
+    issued_via: str,
     scopes: tuple[str, ...] = DEFAULT_SCOPES,
     ttl_days: int | None = None,
 ) -> tuple[str, ApiTokenRow]:
+    """Mint a token and log ``token.issued``. Callers enforce *who* may mint *what*."""
+    if actor.user_id != user_id:
+        raise ValueError(f"actor {actor.id!r} does not belong to user {user_id!r}")
     plain = TOKEN_PREFIX + secrets.token_urlsafe(32)
     now = datetime.now(UTC)
     row = ApiTokenRow(
@@ -59,7 +64,47 @@ async def mint_token(
     )
     session.add(row)
     await session.flush()
+    from relayagents.core.events import Event, TokenIssued
+    from relayagents.core.store import EventStore
+
+    await EventStore(session).append(
+        Event.new(
+            TokenIssued(
+                token_id=row.id,
+                user_id=user_id,
+                token_actor=actor,
+                label=label,
+                expires_at=row.expires_at,
+                issued_via=issued_via,
+            ),  # type: ignore[arg-type]
+            actor=issued_by,
+            source="api",
+            thread_id=f"tokens:{user_id}",
+        )
+    )
     return plain, row
+
+
+async def revoke_token(
+    session: AsyncSession, *, token_id: str, user_id: str, by: Actor, reason: str | None = None
+) -> ApiTokenRow | None:
+    row = await session.get(ApiTokenRow, token_id)
+    if row is None or row.user_id != user_id:
+        return None
+    if row.revoked_at is None:
+        row.revoked_at = datetime.now(UTC)
+        from relayagents.core.events import Event, TokenRevoked
+        from relayagents.core.store import EventStore
+
+        await EventStore(session).append(
+            Event.new(
+                TokenRevoked(token_id=token_id, user_id=user_id, reason=reason),
+                actor=by,
+                source="api",
+                thread_id=f"tokens:{user_id}",
+            )
+        )
+    return row
 
 
 async def lookup_token(
@@ -133,7 +178,16 @@ async def current_principal(
     return principal
 
 
-async def admin_principal(principal: Annotated[Principal, Depends(current_principal)]) -> Principal:
+async def human_principal(principal: Annotated[Principal, Depends(current_principal)]) -> Principal:
+    """Routes that change identity, credentials, or approvals: humans only, never their agents."""
+    if principal.actor.kind != "human":
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "this action needs a human token, not an agent token"
+        )
+    return principal
+
+
+async def admin_principal(principal: Annotated[Principal, Depends(human_principal)]) -> Principal:
     if not principal.is_admin:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "admin only")
     return principal

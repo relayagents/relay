@@ -21,6 +21,23 @@ from relayagents.tools.context import Principal, Services
 router = APIRouter(prefix="/v1/meetings", tags=["meetings"])
 
 ALLOWED_AUDIO = {".m4a", ".mp3", ".wav", ".flac", ".ogg", ".webm", ".mp4"}
+CHUNK = 1 << 20
+
+
+async def _save_upload(upload: UploadFile, dest: Path, *, max_bytes: int) -> int:
+    """Stream to disk in chunks; never hold the whole file in memory."""
+    size = 0
+    with dest.open("wb") as f:
+        while chunk := await upload.read(CHUNK):
+            size += len(chunk)
+            if size > max_bytes:
+                f.close()
+                dest.unlink(missing_ok=True)
+                raise HTTPException(
+                    413, f"upload exceeds {max_bytes >> 20} MB (RELAY_MAX_UPLOAD_MB)"
+                )
+            f.write(chunk)
+    return size
 
 
 class MeetingOut(BaseModel):
@@ -80,18 +97,22 @@ async def upload_meeting(
         if suffix not in ALLOWED_AUDIO:
             raise HTTPException(400, f"unsupported audio type {suffix}")
         dest = base / f"audio{suffix}"
-        dest.write_bytes(await audio.read())
+        await _save_upload(audio, dest, max_bytes=services.settings.max_upload_mb << 20)
         audio_path = str(dest)
     if transcript is not None:
-        raw = await transcript.read()
+        tdest = base / "transcript.upload.json"
+        await _save_upload(
+            transcript, tdest, max_bytes=min(64, services.settings.max_upload_mb) << 20
+        )
         try:
-            data = json.loads(raw)
+            data = json.loads(tdest.read_bytes())
             data.setdefault("meeting_id", meeting_id)
             Transcript.model_validate(data)
         except Exception as exc:
             raise HTTPException(422, f"invalid transcript: {exc}") from exc
         dest = base / "transcript.json"
         dest.write_text(json.dumps(data))
+        tdest.unlink(missing_ok=True)
         transcript_path = str(dest)
     row = MeetingRow(
         id=meeting_id,

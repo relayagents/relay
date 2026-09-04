@@ -142,7 +142,12 @@ class RequestApprovalInput(ToolInput):
     )
     details: dict[str, Any] = Field(default_factory=dict)
     wait: bool = Field(default=True, description="Block until resolved or timeout.")
-    timeout_s: int = Field(default=3600, ge=1, le=86400)
+    timeout_s: int = Field(
+        default=3600,
+        ge=1,
+        le=3600,
+        description="How long to wait; the approval itself expires at the same time.",
+    )
 
 
 class RequestApprovalOutput(ToolOutput):
@@ -150,6 +155,9 @@ class RequestApprovalOutput(ToolOutput):
     status: Literal["pending", "approved", "denied", "expired"]
     edited_action: str | None = None
     requested_of: str
+    notified: bool = Field(
+        description="Whether the human was reached in Slack. If false, they must resolve via the CLI or REST."
+    )
 
 
 # ---- decisions ------------------------------------------------------------------------------

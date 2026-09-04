@@ -53,6 +53,7 @@ async def register(
             harness=body.harness,
             card=body.card,
             push_url=body.push_url,
+            by=principal.actor,
         )
         await session.commit()
         return {"agent_id": row.id, "card": row.card}
