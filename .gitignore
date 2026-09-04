@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+
+# Local state
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite
+data/
+var/
+.relay/
+
+# Never commit real recordings or transcripts. Fixtures live in fixtures/ and are synthetic.
+*.m4a
+*.mp3
+*.wav
+*.flac
+*.ogg
+*.webm
+!fixtures/**/*.wav
+transcripts/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
