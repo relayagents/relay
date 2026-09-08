@@ -91,6 +91,40 @@ should not try to match; and the risk that Slack later opens Slackbot's agent ro
 lower plans, which would squeeze the broker half of Relay (the event log, approvals, and standups
 would still stand).
 
+## How Relay plugs into Claude Tag (verified against the Claude Tag docs, September 2026)
+
+- **Mechanism.** Claude Tag runs each channel thread in an ephemeral cloud sandbox and reaches
+  outside systems through an admin-managed *Access bundle*. A remote MCP server is added as a
+  plugin whose `.mcp.json` points at the server URL, plus a **Bearer** credential whose allowed
+  host is the server's hostname; the token is injected by Anthropic's egress proxy, so the sandbox
+  never holds it. Relay's existing MCP server and opaque bearer tokens fit this without changes.
+- **The node must be public.** Private and internal addresses are blocked by the proxy, so Relay's
+  MCP endpoint must be reachable on the public internet with TLS (the VPS behind Caddy). A
+  Tailscale-only node cannot serve Claude Tag.
+- **Identity mismatch, by design on both sides.** In channels Claude Tag "acts under its own
+  service accounts that an admin provisions, not as the person who asked", while Relay tokens are
+  per person. So Claude Tag is one agent in Relay (a dedicated user owning it, e.g. `tag.claude`),
+  its events say what thread and who asked in the payload text, and its approvals go to that
+  owner. In DMs Claude Tag runs on the member's own claude.ai account with personal connectors, so
+  a member can add Relay as a personal connector with their own token and be attributed correctly.
+- **Laptops are separate.** Claude Tag has no link to a member's local Claude Code; the earlier
+  personal "Claude Code in Slack" (Pro/Max) starts cloud sessions that can be pulled down with
+  `--teleport`, but Tag sessions cannot. What ties a laptop Claude Code to the team is GitHub (its
+  branches and PRs) and Relay's MCP server (`relay setup-agent claude-code`), so both the laptop
+  agent and Claude Tag `report` into the same log.
+- **Overlap to watch.** Claude Tag memory is curated notes per channel and workspace, editable by
+  anyone in the channel and by an Owner, not an exportable structured record. Its routines can post
+  a "daily standup summary" of open threads and a weekly digest of "what got decided, what's still
+  open". That covers Slack-only signal; Relay's standups and digests differ by sourcing from work
+  events (reports, closed items, PRs, approvals) with citations. If a team lives entirely in Slack,
+  Tag's routines may be enough and Relay's slice 2 is optional for them.
+- **Asking another person's agent for an update.** Claude Tag can answer "how's it going?" in the
+  thread where it did the work, and can roll up open threads. It cannot query a coding agent
+  running on someone's laptop; nothing vendor-side can. That is exactly Relay's `ask` and
+  `events --actor`: the laptop agent reports as it works, and anyone can read or ask.
+- **Cost.** Channel work draws from an organization usage balance with a spend limit, no per-seat
+  charge; DMs bill to the member's own seat. There is a launch usage credit for Team and Enterprise.
+
 ## Alternatives
 
 - **Adopt Claude Tag alone and build nothing.** Cheapest in engineering time and already paid for;
