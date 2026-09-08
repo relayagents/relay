@@ -10,5 +10,6 @@
 | [0006](0006-workspace-mcp.md) | workspace-mcp over Google's preview MCP servers |
 | [0007](0007-single-slack-app-socket-mode.md) | One Slack app via Socket Mode |
 | [0008](0008-draft-by-default-standups.md) | Draft-by-default standups |
+| [0009](0009-relay-under-vendor-agents.md) | Relay sits under the vendor agents (Slackbot, Claude Tag, Codex), not beside them |
 
 Format: context, decision, alternatives, what would make us revisit.
