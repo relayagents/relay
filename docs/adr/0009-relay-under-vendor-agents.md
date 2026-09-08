@@ -16,8 +16,10 @@ overlap two of Relay's slices:
 - **Codex in Slack** (paid ChatGPT plans, connected GitHub) starts a cloud coding task from a
   mention and replies with a link.
 - **Slack MCP server and Real-time Search API** (GA February 2026) let any agent query Slack under
-  the user's permissions. Slack's revised terms prohibit apps from "indexing, copying, or
-  permanently storing Slack messages" through the API.
+  the user's permissions. Slack's API terms forbid *third-party* apps ("offered for use by others
+  outside your organization") from keeping "persistent copies, archives, indexes, or long-term data
+  stores of other organizations' API Data" or training an LLM on it. An app an organization runs
+  for itself, on its own data, is not what those clauses address.
 
 So "meeting → notes → items" and "ask a bot about Slack" are table stakes, and "mention a coding
 agent in a thread" exists for the two big vendors. None of these products offers what a lab with
@@ -42,10 +44,15 @@ chat; and any of it on a free or Pro Slack plan.
 3. **Vendor meeting notes are an ingest source.** Slackbot recaps, Gemini Meet notes, and Zoom
    summaries enter the same extraction path as a transcript. WhisperX stays for recordings that
    must not leave the node and for teams without Business+.
-4. **Slack content is read, never stored.** Relay posts to Slack and receives button clicks; it may
-   query Slack at request time through the Real-time Search API or Slack's MCP server; it never
-   copies channel history into the event log. A "team = Slack channel" design (ADR to follow) uses
-   the channel for identity and delivery only.
+4. **Slack is a surface, not a source of record.** Relay posts to Slack, receives button clicks,
+   and may query Slack at request time through the Real-time Search API or Slack's MCP server. It
+   does not copy channel history into the event log, for architectural reasons: Relay's events are
+   its own record and Slack chatter is not one. This is a design choice, not a legal constraint: a
+   self-hosted node is the organization's own app on its own data, and Slack's storage and
+   LLM-training restrictions bind third-party apps handling other organizations' data. They would
+   bind a hosted, multi-tenant Relay, which v1 is not. If channel history is ever wanted, the
+   organization's official Slack export is the clean input. A "team = Slack channel" design (ADR to
+   follow) uses the channel for identity and delivery.
 5. **Own the plan gap.** Relay's first users are labs on Slack Pro or free with mixed providers.
    Every Relay feature must work without Business+, Claude Team, or ChatGPT Business.
 
@@ -71,8 +78,8 @@ month); its real cost is the engineering and operations time to run it.
 ## What is lost by not building Relay
 
 - **Ownership of the record.** Decisions, items, and approvals would live in Salesforce, Anthropic,
-  and OpenAI systems under their retention, and Slack's terms forbid keeping a structured copy of
-  the conversation. No replay, no export, no reprocessing with a better extractor.
+  and OpenAI systems under their retention; Slack's own export gives you raw messages, not the
+  structured record. No replay, no reprocessing with a better extractor.
 - **Coordination across vendors.** Slackbot, Claude Tag, and Codex do not talk to each other or to
   an open-model agent. A lab that mixes providers, or runs local models, has no shared substrate.
 - **Uniform approvals and audit.** Each vendor agent has its own permission UI; nothing records
@@ -137,5 +144,6 @@ would still stand).
 ## Revisit if
 
 Slackbot's agent routing and memory become available on Pro or free plans with an exportable
-record; Slack's terms change to allow structured storage of an app's own channel content; or a
-vendor ships a neutral agent-to-agent broker with human approvals that open-model agents can join.
+record; or a vendor ships a neutral agent-to-agent broker with human approvals that open-model
+agents can join. If the lab moves to Discord, the `ChatApp` protocol is the seam: one connector,
+no other change.
