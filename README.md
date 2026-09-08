@@ -4,6 +4,8 @@
 
 Relay is **not** an agent framework. It runs no model calls on your behalf, holds no private memory, and asks your agent for anything that needs your credentials.
 
+Relay is also not a replacement for Slackbot, Claude in Slack, or Codex in Slack. Those are executors; Relay is the shared memory, approval path, and broker underneath them, and it works on a free or Pro Slack plan with whatever agents your team already uses ([ADR-0009](docs/adr/0009-relay-under-vendor-agents.md)).
+
 ## 60-second quickstart
 
 ```bash
