@@ -34,9 +34,11 @@ chat; and any of it on a free or Pro Slack plan.
 2. **Vendor agents are first-class executors.** Where a team has Claude Tag or Codex, Relay hands
    work to them by posting in a Slack thread and mentioning them, and they reach Relay's memory
    through its MCP server as a connector (`recall`, `my_items`, `report`, `request_approval`).
-   Relay's own per-user agent (Hermes) and sandbox remain the reference path for people without a
-   vendor seat or using open models. The A2A broker stays for agents that can be addressed
-   directly; Slack threads are the transport for vendor agents.
+   For the lab this means Claude Tag and Claude Code in Slack on the Claude Team plan it already
+   has; Claude Team supports custom connectors (remote MCP), which is how Relay's server is added
+   (to verify at first boot). Relay's own per-user agent (Hermes) and sandbox remain the reference
+   path for people without a vendor seat or using open models. The A2A broker stays for agents
+   that can be addressed directly; Slack threads are the transport for vendor agents.
 3. **Vendor meeting notes are an ingest source.** Slackbot recaps, Gemini Meet notes, and Zoom
    summaries enter the same extraction path as a transcript. WhisperX stays for recordings that
    must not leave the node and for teams without Business+.
@@ -47,19 +49,24 @@ chat; and any of it on a free or Pro Slack plan.
 5. **Own the plan gap.** Relay's first users are labs on Slack Pro or free with mixed providers.
    Every Relay feature must work without Business+, Claude Team, or ChatGPT Business.
 
-## Price of fully adopting the vendors instead (list prices, September 2026)
+## Price, from the lab's actual baseline (September 2026)
 
-| Seat | Annual billing, per user per month |
-|---|---|
-| Slack Business+ (needed for Slackbot's agent and Slack AI) | $15 (Pro is $7.25 and has none of it; Enterprise+ typically $22 to $28) |
-| Claude Team standard / premium (premium is the Claude Code usage tier) | $20 to $25 / $100 |
-| ChatGPT Business standard / premium (Codex included) | $20 / $100 |
+The lab is on Slack Pro or free, pays $15 per person per month for Claude Team, and does not plan
+to buy Slack Business+ or ChatGPT Business. Coding-agent usage is paid for regardless of Relay, so
+it is left out of the comparison.
 
-A ten-person lab that standardizes on Slack Business+ plus one vendor's premium coding seats pays
-about $115 per person per month, roughly $14k a year, before API usage for any other models. With
-both vendors at premium it is about $215 per person, roughly $26k a year. Relay's direct cost is a
-small VPS (about $10 a month) plus the model usage the lab already pays for; its real cost is the
-engineering and operations time to run it.
+| Option | Extra cost per person per month | What it adds |
+|---|---|---|
+| Baseline: Slack Pro/free + Claude Team | $0 (already paid) | Claude Tag with channel context and ambient mode, Claude Code in Slack, connectors |
+| Add Slack Business+ | $15 (list) | Slackbot agent, Slack AI, huddle meeting notes |
+| Add ChatGPT Business | $20 (list) | Codex in Slack |
+
+So the realistic "adopt the vendors" stack for this lab is Claude Tag alone. It covers chat Q&A over
+Slack, task execution through connectors, and coding from a thread. It does not cover meeting
+notes (that is Slackbot, behind Business+, or Gemini in Google Meet where the Workspace plan
+includes it), a record the lab owns, coordination with any non-Claude agent, standups from work
+events, or approvals and audit across agents. Relay's direct cost is a small VPS (about $10 a
+month); its real cost is the engineering and operations time to run it.
 
 ## What is lost by not building Relay
 
@@ -74,7 +81,8 @@ engineering and operations time to run it.
   reports, closed items, and PRs with citations.
 - **The research vehicle.** The lab studies agent coordination; vendor products cannot be
   instrumented or modified.
-- **Access below Business+.** Small labs on Pro or free plans get none of the vendor features.
+- **Access below Business+.** Slackbot's meeting notes and agent routing need Business+, which
+  the lab is not buying; without Relay the meeting slice has no home at all.
 
 ## What is lost by building
 
@@ -85,8 +93,8 @@ would still stand).
 
 ## Alternatives
 
-- **Fully adopt the vendors and build nothing.** Cheapest in engineering time; loses everything in
-  the list above and requires Business+ plus paid agent seats for every member.
+- **Adopt Claude Tag alone and build nothing.** Cheapest in engineering time and already paid for;
+  loses everything in the list above, including any meeting slice, and binds the lab to one vendor.
 - **Build a Slack agent app that replaces the vendor agents.** Contradicts ADR-0002 and competes
   where the vendors are strongest.
 - **Relay as a Slack-only product (no Hermes, no sandbox).** Simpler, but leaves out open-model
