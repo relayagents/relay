@@ -31,10 +31,17 @@ run in CI.
 5. **Open the PR** with the template: what and why, how you tested, what you left out. CI must be
    green. An advisory AI review (outerloop) comments within a few minutes; it never approves or
    blocks, so treat it as a second reader, fix what is right, and say why when you disagree.
-   Re-run it by applying the `outerloop:review` label; silence it on one PR with
-   `outerloop:no-review`. A maintainer (see `.github/CODEOWNERS`) reviews; address comments with
-   new commits, not force-pushes, until approved.
-6. **Rebase-merge.** The maintainer merges, or tells you to. Don't merge your own PR.
+   Silence it on one PR with `outerloop:no-review`.
+6. **Converge with the reviewer before asking a human.** Each round reviews the diff as it is
+   *now*, so after you push fixes, remove the `outerloop:review` label and apply it again to get
+   a fresh round on the new commits (the workflow fires on the label being applied). Repeat until
+   a round comes back with nothing substantive. That usually takes four or five rounds on a
+   real change; fewer means the change was small, many more means the change wants splitting.
+   Reply to findings you reject with a one-line reason so the next round and the maintainer see
+   it. Only then request the maintainer's review.
+7. A maintainer (see `.github/CODEOWNERS`) reviews; address comments with new commits, not
+   force-pushes, until approved.
+8. **Rebase-merge.** The maintainer merges, or tells you to. Don't merge your own PR.
 
 ## Rules that tests enforce
 
