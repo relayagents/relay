@@ -56,8 +56,9 @@ Docker is not required for tests. CI runs the same commands plus the Postgres mi
 - **Converge with the advisory reviewer before requesting a human.** outerloop reviews every PR
   opened from a branch in this repo (fork PRs are skipped) with `gpt-5.6-terra`, within minutes. Fix what is right, push, then remove and re-apply the
   `outerloop:review` label to get a fresh round on the new diff. Keep going until a round has no
-  substantive findings, typically four or five rounds; reply with a one-line reason to anything
-  you reject. Silence a PR with `outerloop:no-review` only for trivial changes.
+  substantive findings, typically four or five rounds. On each inline finding, reply with the
+  fixing commit and resolve the thread, or reply with a one-line reason and leave it open if you
+  reject it. Silence a PR with `outerloop:no-review` only for trivial changes.
 - **Rebase-merge** after CI is green and the maintainer approved. Do not merge your own PR.
 - **Ask before big changes.** A new dependency, a schema change, a new service in compose, or
   anything touching the event schema deserves an issue or a short ADR first.
