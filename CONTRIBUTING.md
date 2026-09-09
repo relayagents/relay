@@ -32,9 +32,10 @@ run in CI.
    green. An advisory AI review (outerloop) comments within a few minutes; it never approves or
    blocks, so treat it as a second reader, fix what is right, and say why when you disagree.
    Silence it on one PR with `outerloop:no-review`.
-6. **Converge with the reviewer before asking a human.** Each round reviews the diff as it is
-   *now*, so after you push fixes, remove the `outerloop:review` label and apply it again to get
-   a fresh round on the new commits (the workflow fires on the label being applied). Repeat until
+6. **Converge with the reviewer before asking a human.** Opening the PR starts round 1; watch for
+   it (a few minutes) and handle every finding before doing anything else. Each round reviews the
+   diff as it is *now*, so after you push fixes, remove the `outerloop:review` label and apply it
+   again to get a fresh round on the new commits (the workflow fires on the label being applied). Repeat until
    a round comes back with nothing substantive. That usually takes four or five rounds on a
    real change; fewer means the change was small, many more means the change wants splitting.
    On each inline finding, reply with the commit that fixed it and resolve the thread, or reply

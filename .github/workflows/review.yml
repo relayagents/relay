@@ -17,7 +17,11 @@ permissions:
 
 jobs:
   review:
-    if: github.event.action != 'labeled' || github.event.label.name == 'outerloop:review'
+    # Skip PRs carrying outerloop:no-review here too (the reviewer also honors it), so an opted-out PR
+    # never even starts a run. Otherwise run on open/reopen and on the outerloop:review label.
+    if: >-
+      !contains(github.event.pull_request.labels.*.name, 'outerloop:no-review')
+      && (github.event.action != 'labeled' || github.event.label.name == 'outerloop:review')
     # Pinned to a released tag; main moves. Bump deliberately.
     uses: outerloop-science/outerloop/.github/workflows/advisory-review-agent.yml@v0.1.0.dev3
     with:
