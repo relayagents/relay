@@ -53,6 +53,11 @@ Docker is not required for tests. CI runs the same commands plus the Postgres mi
   already reviewed once.
 - **PR description says what and why**, links the ADR or issue, lists what you tested, and names
   anything you deliberately left out. Use the template.
+- **Converge with the advisory reviewer before requesting a human.** outerloop reviews every PR
+  from `gpt-5.6-terra` within minutes. Fix what is right, push, then remove and re-apply the
+  `outerloop:review` label to get a fresh round on the new diff. Keep going until a round has no
+  substantive findings, typically four or five rounds; reply with a one-line reason to anything
+  you reject. Silence a PR with `outerloop:no-review` only for trivial changes.
 - **Rebase-merge** after CI is green and the maintainer approved. Do not merge your own PR.
 - **Ask before big changes.** A new dependency, a schema change, a new service in compose, or
   anything touching the event schema deserves an issue or a short ADR first.
