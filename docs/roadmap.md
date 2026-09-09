@@ -44,6 +44,9 @@ Update this file when you finish or reprioritize something; it is the handoff be
 
 ## Known gaps, accepted for now
 
+- The outerloop advisory reviewer (`.github/workflows/review.yml`) needs the `ANTHROPIC_REVIEWER_KEY`
+  repository secret; until it is set, every PR gets a visible "could not run" stub.
+
 - REST does not check token scopes yet (MCP does).
 - `ask.thread_id` is caller-chosen; `report --close-item` can close a teammate's item (attributed).
 - The compose stack has never been run end to end; CI validates `docker compose config` and builds
@@ -55,4 +58,4 @@ Update this file when you finish or reprioritize something; it is the handoff be
 - Claude Tag connector (mechanics recorded in ADR-0009 if wanted).
 - Discord `ChatApp` connector, if the lab moves; one connector behind the existing protocol.
 - Knowledge graph (opt-in `graphiti-kuzu`; prefer FalkorDB Lite if ever enabled).
-- Advisory PR reviewer (PR #3, draft) until the reviewer repo is reachable from this org.
+
