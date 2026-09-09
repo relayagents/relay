@@ -1,0 +1,27 @@
+# Advisory AI review on every pull request, from outerloop (outerloop-science/outerloop, public).
+# It posts findings as a PR review; it never approves, never blocks CI, and never runs the PR's
+# code. PRs from forks are skipped so they cannot reach the key. Re-run a review by applying the
+# `outerloop:review` label; silence one PR with `outerloop:no-review`. Docs: outerloop/docs/reviewer.md.
+#
+# Needs the repository secret ANTHROPIC_REVIEWER_KEY (a spend-capped key used only for reviews).
+# Without it every PR gets a visible "could not run" stub, by design.
+name: outerloop-review
+on:
+  pull_request_target:
+    types: [opened, reopened, labeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    if: github.event.action != 'labeled' || github.event.label.name == 'outerloop:review'
+    # Pinned to a released tag; main moves. Bump deliberately.
+    uses: outerloop-science/outerloop/.github/workflows/advisory-review-agent.yml@v0.1.0.dev3
+    with:
+      bot_login: relay-bot   # PRs by this login are never reviewed; we have no bot yet, so everything is reviewed
+      backend: claude
+      reviewer_ref: v0.1.0.dev3
+    secrets:
+      anthropic_reviewer_key: ${{ secrets.ANTHROPIC_REVIEWER_KEY }}

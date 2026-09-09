@@ -29,8 +29,11 @@ run in CI.
    review pass (correctness; plus a security lens for auth, tokens, the broker, approvals, uploads)
    and fix findings first. Reviewers should be reading a diff that has already been reviewed once.
 5. **Open the PR** with the template: what and why, how you tested, what you left out. CI must be
-   green. A maintainer (see `.github/CODEOWNERS`) reviews; address comments with new commits, not
-   force-pushes, until approved.
+   green. An advisory AI review (outerloop) comments within a few minutes; it never approves or
+   blocks, so treat it as a second reader, fix what is right, and say why when you disagree.
+   Re-run it by applying the `outerloop:review` label; silence it on one PR with
+   `outerloop:no-review`. A maintainer (see `.github/CODEOWNERS`) reviews; address comments with
+   new commits, not force-pushes, until approved.
 6. **Rebase-merge.** The maintainer merges, or tells you to. Don't merge your own PR.
 
 ## Rules that tests enforce
