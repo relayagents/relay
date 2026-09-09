@@ -37,8 +37,9 @@ run in CI.
    a fresh round on the new commits (the workflow fires on the label being applied). Repeat until
    a round comes back with nothing substantive. That usually takes four or five rounds on a
    real change; fewer means the change was small, many more means the change wants splitting.
-   Reply to findings you reject with a one-line reason so the next round and the maintainer see
-   it. Only then request the maintainer's review.
+   On each inline finding, reply with the commit that fixed it and resolve the thread, or reply
+   with a one-line reason if you reject it and leave it open, so the next round and the maintainer
+   see the state at a glance. Only then request the maintainer's review.
 7. A maintainer (see `.github/CODEOWNERS`) reviews; address comments with new commits, not
    force-pushes, until approved.
 8. **Rebase-merge.** The maintainer merges, or tells you to. Don't merge your own PR.
