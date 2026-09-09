@@ -1,30 +1,65 @@
 # Contributing to Relay
 
-Thanks for helping. Relay is small on purpose; keep it that way.
+Thanks for helping. Relay is small on purpose; keep it that way. `CLAUDE.md` is the short version
+of everything below and is what coding agents read; humans should read it too.
 
 ## Setup
 
 ```bash
+git clone https://github.com/relayagents/relay && cd relay
 uv sync --extra graph
 uv run pytest -q
 uv run ruff check src tests && uv run ruff format --check src tests
 ```
 
-Tests run against SQLite and need no services. The Postgres migration is checked in CI.
+Tests run against SQLite and need no services. The Postgres migration and a compose config check
+run in CI.
 
-## How we work
+## The workflow
 
-- **Small conventional commits.** `feat(core): ...`, `fix(api): ...`, `docs: ...`, `test: ...`, `chore: ...`.
-- **Protocol before implementation.** A new connector starts by extending a protocol in `src/relayagents/core/protocols.py` and its section in `docs/protocols.md`, then adds the reference implementation under `src/relayagents/connectors/`.
-- **Every event type gets a test.** Add a sample to `tests/test_events.py` when you add a payload, and a row to `docs/data-model.md`.
-- **Tool surface changes touch one file.** Add a `ToolSpec` to `src/relayagents/tools/registry.py`; MCP, CLI, and REST follow. `tests/test_tool_surface.py` checks they agree.
-- **Policy changes touch two files.** `src/relayagents/core/permissions.py` and `docs/permissions.md`; a test keeps them in sync.
-- **Decisions get an ADR** in `docs/adr/` with alternatives and what would make us revisit.
-- **Prefer boring, well-documented libraries.** If a stack choice looks wrong, open an issue with a one-paragraph rationale before building the replacement.
+1. **Open or find an issue** for anything bigger than a typo, a test, or a doc fix. New dependency,
+   schema change, new compose service, or event-schema change: write a short ADR in `docs/adr/`
+   first (copy the shape of an existing one: context, decision, alternatives, revisit if).
+2. **Branch from `main`**: `feat/...`, `fix/...`, `docs/...`, `ci/...`. Never push to `main`; it is
+   protected (PRs only, CI required, linear history, maintainer review).
+3. **Small conventional commits**: `feat(core): ...`, `fix(api): ...`, `docs: ...`, `test: ...`,
+   `chore: ...`. If an AI coding agent wrote or co-wrote the change, keep the `Co-Authored-By`
+   trailer it adds; we disclose that.
+4. **Self-review before the PR.** Read your diff as a reviewer. If an agent helped, have it run a
+   review pass (correctness; plus a security lens for auth, tokens, the broker, approvals, uploads)
+   and fix findings first. Reviewers should be reading a diff that has already been reviewed once.
+5. **Open the PR** with the template: what and why, how you tested, what you left out. CI must be
+   green. A maintainer (see `.github/CODEOWNERS`) reviews; address comments with new commits, not
+   force-pushes, until approved.
+6. **Rebase-merge.** The maintainer merges, or tells you to. Don't merge your own PR.
 
-## Never commit
+## Rules that tests enforce
 
-Real credentials, real meeting audio, real transcripts, or real Slack exports. `.env.example` only; fixtures are synthetic. Secret-scanning push protection is enabled on the repo.
+- Every event type has a sample in `tests/test_events.py` and a row in `docs/data-model.md`.
+- The tool surface is defined once in `src/relayagents/tools/registry.py`;
+  `tests/test_tool_surface.py` checks MCP, CLI, and REST agree, and the README table lists every tool.
+- `src/relayagents/core/permissions.py` and the table in `docs/permissions.md` match.
+- Every ADR file appears in `docs/adr/README.md`.
+
+## Rules that people enforce
+
+- **Protocol before implementation.** Extend `src/relayagents/core/protocols.py` and
+  `docs/protocols.md`, then add the reference implementation under `src/relayagents/connectors/`.
+- **Prefer boring, well-documented libraries.** If a stack choice looks wrong, open an issue with a
+  one-paragraph rationale before building the replacement.
+- **Fixtures are synthetic.** No real meetings, people, audio, transcripts, or Slack exports.
+- **Never commit credentials.** `.env.example` only. Secret-scanning push protection is on.
+- **Be kind in review.** Comment on the code, propose the fix, assume good faith. New contributors
+  are learning the codebase and the conventions at the same time.
+
+## Etiquette for AI-assisted work
+
+Using Claude Code, Codex, or another agent on this repo is expected; the repo is built for teams
+that do exactly that. Three habits keep it healthy:
+
+- Point the agent at `CLAUDE.md` (Claude Code reads it automatically) and at the relevant ADR.
+- Never paste tokens, `.env` contents, or real transcripts into an agent session.
+- You own what you submit. Read the diff, run the tests, and be able to explain every change.
 
 ## Reporting security issues
 

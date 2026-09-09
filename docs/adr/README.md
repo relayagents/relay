@@ -13,3 +13,5 @@
 | [0009](0009-relay-under-vendor-agents.md) | Relay sits under the vendor agents (Slackbot, Claude Tag, Codex), not beside them |
 
 Format: context, decision, alternatives, what would make us revisit.
+
+What comes next lives in [../roadmap.md](../roadmap.md); ADRs record why, the roadmap records when.

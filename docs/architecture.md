@@ -1,8 +1,8 @@
 # Architecture
 
-Relay is a coordination substrate for a small team where each person runs their own agent. It is a
-switchboard and a shared memory, not an agent. This page covers the components, the deployment
-topology, and the two vertical slices.
+Relay connects each person's coding agent to the team's meetings and chat. It is a switchboard and
+a shared memory, not an agent. This page covers the components, the deployment topology, and the
+two vertical slices. For what comes next, see [roadmap.md](roadmap.md).
 
 ## Components
 
