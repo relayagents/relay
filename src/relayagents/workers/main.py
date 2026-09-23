@@ -71,3 +71,6 @@ class WorkerSettings:
     job_deserializer = job_deserializer
     max_jobs = 4
     job_timeout = 1800
+    # The health key expires one second after this interval; arq's default of an hour would let a
+    # dead worker pass `arq --check` (the compose healthcheck) for up to an hour.
+    health_check_interval = 30

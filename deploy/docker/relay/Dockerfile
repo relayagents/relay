@@ -15,6 +15,6 @@ COPY deploy/docker/relay/entrypoint.sh /entrypoint.sh
 USER relay
 VOLUME ["/var/lib/relay"]
 EXPOSE 8000
-HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 CMD curl -fsS http://localhost:8000/health || exit 1
+# No HEALTHCHECK here: this image runs several roles, so each compose service declares its own probe.
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["api"]
