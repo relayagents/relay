@@ -80,6 +80,12 @@ services:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
     expose: ["8000"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
     restart: unless-stopped
 
   relay-workers:
@@ -97,6 +103,13 @@ services:
       - graphdata:/var/lib/relay/graph     # only used when RELAY_MEMORY_BACKEND=graphiti-kuzu
     depends_on:
       relay-api: { condition: service_healthy }
+    healthcheck:
+      # arq's own check: passes while the worker keeps refreshing its health key in Redis.
+      test: ["CMD", "arq", "--check", "relayagents.workers.main.WorkerSettings"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
     restart: unless-stopped
 
   relay-ingest:
