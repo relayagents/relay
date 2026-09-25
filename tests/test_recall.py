@@ -95,6 +95,18 @@ def test_make_embedder_degrades_without_a_team_key(monkeypatch) -> None:  # type
     assert make_embedder(Settings(embedding_model="", _env_file=None)) is None  # type: ignore[call-arg]
 
 
+@pytest.mark.parametrize("exc", [RuntimeError("Missing credentials"), RuntimeError()])
+def test_make_embedder_degrades_on_a_provider_error(monkeypatch, exc: Exception) -> None:  # type: ignore[no-untyped-def]
+    """A missing key can surface as the provider's own error type, not pydantic_ai's UserError."""
+
+    def boom(name: str) -> None:
+        raise exc
+
+    monkeypatch.setattr("pydantic_ai.embeddings.infer_embedding_model", boom)
+    settings = Settings(embedding_model="openai:text-embedding-3-small", _env_file=None)  # type: ignore[call-arg]
+    assert make_embedder(settings) is None
+
+
 async def test_embedder_rejects_wrong_dimension() -> None:
     emb = PydanticAIEmbedder(TestEmbeddingModel(dimensions=8))
     with pytest.raises(ValueError, match="8 dimensions"):
