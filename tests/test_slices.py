@@ -150,4 +150,11 @@ async def test_replay_rebuilds_projections(services, team, client: httpx.AsyncCl
 
 async def test_health(client: httpx.AsyncClient) -> None:
     r = await client.get("/health")
-    assert r.status_code == 200 and r.json()["status"] == "ok" and r.json()["db"] is True
+    body = r.json()
+    assert r.status_code == 200 and body["status"] == "ok" and body["db"] is True
+    # *_configured fields are construction checks, not liveness probes: they must be
+    # named accordingly so callers don't mistake them for reachability (issue #12).
+    for field in ("slack_configured", "workspace_mcp_configured", "semantic_recall_configured"):
+        assert field in body and isinstance(body[field], bool)
+    for legacy in ("slack", "workspace_mcp", "semantic_recall"):
+        assert legacy not in body
