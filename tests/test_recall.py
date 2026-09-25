@@ -95,22 +95,16 @@ def test_make_embedder_degrades_without_a_team_key(monkeypatch) -> None:  # type
     assert make_embedder(Settings(embedding_model="", _env_file=None)) is None  # type: ignore[call-arg]
 
 
-def test_make_embedder_degrades_on_a_provider_credential_error(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """A missing key can surface as the provider's own error type (e.g. ``openai.OpenAIError``),
-    not just ``pydantic_ai``'s ``UserError``/``ValueError`` (issue #13): any failure building the
-    embedder must degrade to ``None`` rather than crash the worker."""
-    import relayagents.connectors.memory.embeddings as embeddings_module
+@pytest.mark.parametrize("exc", [RuntimeError("Missing credentials"), RuntimeError()])
+def test_make_embedder_degrades_on_a_provider_error(monkeypatch, exc: Exception) -> None:  # type: ignore[no-untyped-def]
+    """A missing key can surface as the provider's own error type, not pydantic_ai's UserError."""
 
     def boom(name: str) -> None:
-        raise RuntimeError("Missing credentials")
+        raise exc
 
-    monkeypatch.setattr("pydantic_ai.embeddings.infer_embedding_model", boom, raising=True)
-    assert (
-        embeddings_module.make_embedder(
-            Settings(embedding_model="openai:text-embedding-3-small", _env_file=None)
-        )
-        is None
-    )  # type: ignore[call-arg]
+    monkeypatch.setattr("pydantic_ai.embeddings.infer_embedding_model", boom)
+    settings = Settings(embedding_model="openai:text-embedding-3-small", _env_file=None)  # type: ignore[call-arg]
+    assert make_embedder(settings) is None
 
 
 async def test_embedder_rejects_wrong_dimension() -> None:
