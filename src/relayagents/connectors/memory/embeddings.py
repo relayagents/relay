@@ -90,7 +90,8 @@ def make_embedder(settings: Settings) -> PydanticAIEmbedder | None:
         # worker: an unknown provider raises pydantic_ai's UserError, but a missing provider
         # credential raises that provider's own error type (e.g. openai.OpenAIError), which is
         # a longer and less stable list to name explicitly.
-        log.warning("embeddings.disabled", model=name, reason=str(exc).splitlines()[0])
+        reason = next(iter(str(exc).splitlines()), type(exc).__name__)
+        log.warning("embeddings.disabled", model=name, reason=reason)
         return None
     log.info("embeddings.enabled", model=name)
     return PydanticAIEmbedder(name)
