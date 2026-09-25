@@ -31,9 +31,13 @@ async def health(request: Request) -> dict[str, Any]:
     return {
         "status": status,
         "version": __version__,
+        # db/redis are live probes (a query, a PING); the fields below only reflect
+        # whether the connector was constructed from settings, never whether it is
+        # reachable. Naming them *_configured keeps that distinction honest, and an
+        # unreachable optional connector deliberately does not affect `status`.
         "db": db_ok,
         "redis": redis_ok,
-        "slack": services.chat is not None,
-        "workspace_mcp": services.office is not None,
-        "semantic_recall": services.semantic is not None,
+        "slack_configured": services.chat is not None,
+        "workspace_mcp_configured": services.office is not None,
+        "semantic_recall_configured": services.semantic is not None,
     }
