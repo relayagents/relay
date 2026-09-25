@@ -29,6 +29,11 @@ services:
       # Audio and transcripts live on the node's relaydata volume. Share it here (NFS/rsync/Tailscale drive)
       # or point RELAY_DATA_DIR at a synced folder; see docs/architecture.md "GPU worker".
       - ${RELAY_DATA_DIR:-./data}:/var/lib/relay
+    healthcheck:
+      test: ["CMD", "arq", "--check", "relayagents.ingest.worker.WorkerSettings"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     deploy:
       resources:
         reservations:
