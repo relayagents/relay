@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import socket
 from pathlib import Path
 from typing import Any
 
@@ -113,6 +114,14 @@ class WorkerSettings:
     job_deserializer = job_deserializer
     max_jobs = 1
     job_timeout = 3600
+    # arq's health key is per-queue (`<queue_name>:health-check`), not per-process. The CPU
+    # fallback here and the optional GPU worker (docker-compose.gpu.yml) both consume
+    # `relay:ingest`, so a shared key would let either one's heartbeat mask the other's death.
+    # Scope the key to this host so `arq --check` inside a given container only ever reads its
+    # own heartbeat. Also lower the interval from arq's 3600s default (key TTL = interval + 1s)
+    # so a dead worker is caught in seconds, not up to an hour.
+    health_check_key = f"{INGEST_QUEUE}:health-check:{socket.gethostname()}"
+    health_check_interval = 30
 
 
 __all__ = ["INGEST_QUEUE", "WorkerSettings", "json", "transcribe_meeting"]
