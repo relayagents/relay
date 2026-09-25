@@ -77,7 +77,7 @@ def _check(vec: list[float], model: str) -> list[float]:
 
 def make_embedder(settings: Settings) -> PydanticAIEmbedder | None:
     """Build the team embedder, or return None (with a log line saying why) so recall degrades."""
-    from pydantic_ai.embeddings import UserError, infer_embedding_model
+    from pydantic_ai.embeddings import infer_embedding_model
 
     name = settings.embedding_model.strip()
     if name in ("", "none", "off"):
@@ -85,7 +85,11 @@ def make_embedder(settings: Settings) -> PydanticAIEmbedder | None:
         return None
     try:
         infer_embedding_model(name)  # fails fast on an unknown provider or a missing key
-    except (UserError, ValueError) as exc:
+    except Exception as exc:
+        # Any failure to build an embedder degrades recall rather than crash-looping the
+        # worker: an unknown provider raises pydantic_ai's UserError, but a missing provider
+        # credential raises that provider's own error type (e.g. openai.OpenAIError), which is
+        # a longer and less stable list to name explicitly.
         log.warning("embeddings.disabled", model=name, reason=str(exc).splitlines()[0])
         return None
     log.info("embeddings.enabled", model=name)
