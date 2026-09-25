@@ -122,6 +122,11 @@ services:
       - relaydata:/var/lib/relay
     depends_on:
       relay-api: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "arq", "--check", "relayagents.ingest.worker.WorkerSettings"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     restart: unless-stopped
 
   workspace-mcp:
