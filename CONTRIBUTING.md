@@ -43,7 +43,8 @@ run in CI.
    see the state at a glance. Only then request the maintainer's review.
 7. A maintainer (see `.github/CODEOWNERS`) reviews; address comments with new commits, not
    force-pushes, until approved.
-8. **Rebase-merge.** The maintainer merges, or tells you to. Don't merge your own PR.
+8. **Rebase-merge.** Once a maintainer other than you has approved and CI is green, you (or the
+   maintainer) rebase-merge. If `main` moved, click "Update branch" and let CI rerun first.
 
 ## Rules that tests enforce
 

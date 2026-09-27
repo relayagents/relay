@@ -61,7 +61,8 @@ Docker is not required for tests. CI runs the same commands plus the Postgres mi
   four or five rounds. On each inline finding, reply with the fixing commit and resolve the
   thread, or reply with a one-line reason and leave it open if you reject it. Silence a PR with
   `outerloop:no-review` only for trivial changes.
-- **Rebase-merge** after CI is green and the maintainer approved. Do not merge your own PR.
+- **Rebase-merge** after CI is green and a maintainer other than the author has approved (see
+  `.github/CODEOWNERS`). Once that approval exists, the author may merge.
 - **Ask before big changes.** A new dependency, a schema change, a new service in compose, or
   anything touching the event schema deserves an issue or a short ADR first.
 - **Keep the docs true.** `tests/test_docs.py` fails when the permissions table, event-type list,
