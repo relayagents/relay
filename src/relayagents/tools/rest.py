@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from relayagents.api.auth import current_principal
+from relayagents.api.auth import tools_principal
 from relayagents.tools.context import Principal, ToolContext
 from relayagents.tools.handlers import ToolError
 from relayagents.tools.registry import TOOLS
@@ -40,7 +40,7 @@ def _endpoint(spec: ToolSpec) -> Any:
                 "principal",
                 inspect.Parameter.POSITIONAL_OR_KEYWORD,
                 annotation=Principal,
-                default=Depends(current_principal),
+                default=Depends(tools_principal),
             ),
         ]
     )
