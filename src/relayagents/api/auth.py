@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
@@ -171,6 +172,25 @@ async def current_principal(
             headers={"WWW-Authenticate": "Bearer"},
         )
     return principal
+
+
+def require_scope(scope: str) -> Callable[..., Awaitable[Principal]]:
+    """REST mirror of MCP's ``required_scopes``: the token must carry ``scope``."""
+
+    async def scoped_principal(
+        principal: Annotated[Principal, Depends(current_principal)],
+    ) -> Principal:
+        if scope not in principal.scopes:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, f"this token lacks the {scope!r} scope")
+        return principal
+
+    return scoped_principal
+
+
+tools_principal = require_scope("tools")
+events_reader = require_scope("events:read")
+events_writer = require_scope("events:write")
+a2a_principal = require_scope("a2a")
 
 
 async def human_principal(principal: Annotated[Principal, Depends(current_principal)]) -> Principal:

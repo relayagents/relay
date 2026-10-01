@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import httpx
 
+from relayagents.api.auth import DEFAULT_SCOPES, mint_token
 from relayagents.api.routes.users import approve_device
+from relayagents.core.events import Actor
 from relayagents.tools.rest import TOOLS_PREFIX
 from relayagents.tools.runtime import redact
 from tests.conftest import FIXTURES, auth
@@ -325,3 +327,51 @@ async def test_events_actor_filter_includes_a_users_agents(client: httpx.AsyncCl
         )
     ).json()["events"]
     assert {e["actor"]["id"] for e in only} == {"grace.hermes"}
+
+
+async def test_rest_enforces_token_scopes(client: httpx.AsyncClient, services, team) -> None:  # type: ignore[no-untyped-def]
+    """REST honors a narrowed token the same way MCP does (``required_scopes``)."""
+
+    async def mint(*scopes: str) -> dict[str, str]:
+        agent = Actor(kind="agent", id="ada.hermes")
+        async with services.db.session() as session:
+            plain, _ = await mint_token(
+                session,
+                user_id="ada",
+                actor=agent,
+                label="narrow",
+                settings=services.settings,
+                issued_by=Actor(kind="human", id="ada"),
+                issued_via="api",
+                scopes=scopes,
+            )
+            await session.commit()
+        return auth(plain)
+
+    report = {"text": "scoped"}
+    event = {"payload": {"type": "report.posted", "text": "scoped"}}
+    card = {"name": "hermes"}
+
+    def calls(h: dict[str, str]):  # type: ignore[no-untyped-def]
+        return {
+            "tools": client.post(f"{TOOLS_PREFIX}/report", json=report, headers=h),
+            "events:read": client.get("/v1/events", headers=h),
+            "events:write": client.post("/v1/events", json=event, headers=h),
+            "a2a": client.get("/a2a/inbox", headers=h),
+            "a2a-register": client.post("/a2a/agents", json={"card": card}, headers=h),
+        }
+
+    none = await mint()
+    for scope in ("", *DEFAULT_SCOPES):
+        h = await mint(scope) if scope else none
+        for name, call in calls(h).items():
+            r = await call
+            if name.split("-")[0] == scope:
+                assert r.is_success, (scope, name, r.status_code, r.text)
+            else:
+                assert r.status_code == 403, (scope, name, r.status_code, r.text)
+                assert "scope" in r.json()["detail"], (scope, name)
+
+    # public surfaces stay public; identity routes need no scope
+    assert (await client.get(TOOLS_PREFIX)).status_code == 200
+    assert (await client.get("/v1/me", headers=none)).status_code == 200

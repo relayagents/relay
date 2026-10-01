@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from relayagents.api.a2a_broker import broker
 from relayagents.api.a2a_broker.types import AgentCard, Message, SendMessageParams, Task, TaskUpdate
-from relayagents.api.auth import current_principal, get_services
+from relayagents.api.auth import a2a_principal, get_services
 from relayagents.tools.context import Principal, Services
 
 router = APIRouter(prefix="/a2a", tags=["a2a"])
@@ -35,7 +35,7 @@ class RegisterIn(BaseModel):
 @router.post("/agents", status_code=201)
 async def register(
     body: RegisterIn,
-    principal: Annotated[Principal, Depends(current_principal)],
+    principal: Annotated[Principal, Depends(a2a_principal)],
     services: Annotated[Services, Depends(get_services)],
 ) -> dict[str, Any]:
     agent_id = body.agent_id or (
@@ -61,7 +61,7 @@ async def register(
 
 @router.get("/agents")
 async def list_agents(
-    _: Annotated[Principal, Depends(current_principal)],
+    _: Annotated[Principal, Depends(a2a_principal)],
     services: Annotated[Services, Depends(get_services)],
 ) -> list[dict[str, Any]]:
     from sqlalchemy import select
@@ -105,7 +105,7 @@ class JsonRpcRequest(BaseModel):
 async def jsonrpc(
     agent_id: str,
     body: JsonRpcRequest,
-    principal: Annotated[Principal, Depends(current_principal)],
+    principal: Annotated[Principal, Depends(a2a_principal)],
     services: Annotated[Services, Depends(get_services)],
 ) -> dict[str, Any]:
     """A2A JSON-RPC binding. Any A2A client can `message/send` to a Relay agent this way."""
@@ -148,7 +148,7 @@ async def jsonrpc(
 
 @router.get("/inbox")
 async def inbox(
-    principal: Annotated[Principal, Depends(current_principal)],
+    principal: Annotated[Principal, Depends(a2a_principal)],
     services: Annotated[Services, Depends(get_services)],
     wait: int = Query(default=0, ge=0, le=60, description="Long-poll seconds."),
     states: Annotated[list[str] | None, Query()] = None,
@@ -170,7 +170,7 @@ async def inbox(
 @router.get("/tasks/{task_id}")
 async def get_task(
     task_id: str,
-    _: Annotated[Principal, Depends(current_principal)],
+    _: Annotated[Principal, Depends(a2a_principal)],
     services: Annotated[Services, Depends(get_services)],
 ) -> Task:
     async with services.db.session() as session:
@@ -184,7 +184,7 @@ async def get_task(
 async def update_task(
     task_id: str,
     body: TaskUpdate,
-    principal: Annotated[Principal, Depends(current_principal)],
+    principal: Annotated[Principal, Depends(a2a_principal)],
     services: Annotated[Services, Depends(get_services)],
 ) -> Task:
     if principal.actor.kind != "agent":

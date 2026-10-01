@@ -15,6 +15,8 @@ Relay's rule: **agents act under their human's own tokens, external writes need 
 
 Tokens are opaque (`rly_...`), stored as SHA-256 with an optional pepper, expire after `RELAY_TOKEN_TTL_DAYS`, and can be revoked (`DELETE /v1/tokens/{id}`). Every event records the actor the token was bound to, so an agent can never be mistaken for its human in the log.
 
+Each token carries scopes, and every surface checks them: `tools` for MCP and `/v1/tools/*`, `events:read` for `GET /v1/events` and `/v1/events/{id}`, `events:write` for `POST /v1/events`, and `a2a` for the `/a2a` broker (agent cards stay public). A token missing the scope gets a 403. Tokens are minted with all four today; meetings, standups, approvals, and identity routes need no scope.
+
 Rules that keep an agent from escalating to its human:
 
 - Only a **human** token can mint tokens (`POST /v1/tokens`), revoke them, change identity bindings or posting mode (`PATCH /v1/me`), resolve approvals, or act as admin. An admin's agent token is not an admin.
