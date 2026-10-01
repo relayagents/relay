@@ -13,11 +13,15 @@ from arq.connections import RedisSettings
 from relayagents.core.config import get_settings
 from relayagents.core.db import Database
 from relayagents.core.models import MeetingRow
-from relayagents.core.queue import job_deserializer, job_serializer
+from relayagents.core.queue import (
+    INGEST_QUEUE,
+    WORKER_QUEUE,
+    job_deserializer,
+    job_serializer,
+)
 from relayagents.ingest.fixture import FixtureTranscriber
 
 log = structlog.get_logger()
-INGEST_QUEUE = "relay:ingest"
 
 
 def make_transcriber(settings: Any) -> Any:
@@ -56,9 +60,7 @@ async def transcribe_meeting(ctx: dict[str, Any], meeting_id: str) -> str:
             meeting.transcript_path = str(out)
             meeting.status = "queued"
             await session.commit()
-        await ctx["redis"].enqueue_job(
-            "extract_meeting", meeting_id
-        )  # default queue → relay-workers
+        await ctx["redis"].enqueue_job("extract_meeting", meeting_id, _queue_name=WORKER_QUEUE)
         log.info("meeting.transcribed", meeting_id=meeting_id, segments=len(transcript.segments))
         return str(out)
     except Exception as exc:

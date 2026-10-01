@@ -9,7 +9,7 @@ from arq import cron
 from arq.connections import RedisSettings
 
 from relayagents.core.config import get_settings
-from relayagents.core.queue import job_deserializer, job_serializer
+from relayagents.core.queue import WORKER_QUEUE, job_deserializer, job_serializer
 from relayagents.workers.jobs import (
     daily_digest,
     embed_backlog,
@@ -66,7 +66,7 @@ class WorkerSettings:
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(_settings.redis_url)
-    queue_name = "arq:queue"
+    queue_name = WORKER_QUEUE
     job_serializer = job_serializer
     job_deserializer = job_deserializer
     max_jobs = 4

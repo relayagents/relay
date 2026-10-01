@@ -26,3 +26,9 @@ async def connect(redis_url: str) -> ArqRedis:
         job_serializer=job_serializer,
         job_deserializer=job_deserializer,
     )
+
+
+# Name both queues explicitly. Inside an arq worker, ``ctx["redis"]`` defaults to that worker's
+# own queue, so an unqualified enqueue from relay-ingest would land back on relay:ingest.
+WORKER_QUEUE = "arq:queue"  # relay-workers (arq's default name)
+INGEST_QUEUE = "relay:ingest"  # relay-ingest, wherever the GPU is
