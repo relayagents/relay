@@ -48,7 +48,6 @@ Update this file when you finish or reprioritize something; it is the handoff be
 - The outerloop advisory reviewer (`.github/workflows/review.yml`) runs hermes on the OpenAI provider
   with `gpt-5.6-terra` and uses the `OPENAI_REVIEWER_KEY` repository secret (set 2026-09-09).
 
-- REST does not check token scopes yet (MCP does) (#30).
 - `ask.thread_id` is caller-chosen (#31); `report --close-item` can close a teammate's item
   (attributed) (#32).
 - The compose stack has never been run end to end; CI validates `docker compose config` and builds
