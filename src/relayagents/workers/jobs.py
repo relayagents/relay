@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from relayagents.core.events import Actor, Event, TranscriptSegment
 from relayagents.core.models import MeetingRow
@@ -27,16 +27,24 @@ log = structlog.get_logger()
 async def extract_meeting(ctx: dict[str, Any], meeting_id: str) -> dict[str, Any]:
     """Transcript (from file or from transcript.segment events) → decision/item/question events → PM."""
     services: Services = ctx["services"]
+    # Claim the meeting with a compare-and-set, so a duplicate ticket (the sweep re-driving a
+    # meeting another job just claimed, or one that already finished) backs off instead of
+    # appending the decisions again and re-posting the summary. The one legitimate rerun of an
+    # `extracting` meeting is arq retrying a job whose worker died, which arq marks with job_try.
+    claimable = ["queued", "extracting"] if ctx.get("job_try", 1) > 1 else ["queued"]
     async with services.db.session() as session:
-        meeting = await session.get(MeetingRow, meeting_id)
-        if meeting is None:
-            raise KeyError(meeting_id)
-        if meeting.status == "done":
-            # A duplicate ticket (e.g. the sweeper re-driving a meeting whose original job already
-            # finished) must not append the decisions again or re-post the summary.
-            return {"meeting_id": meeting_id, "skipped": "already done"}
-        meeting.status = "extracting"
+        claimed = await session.execute(
+            update(MeetingRow)
+            .where(MeetingRow.id == meeting_id, MeetingRow.status.in_(claimable))
+            .values(status="extracting")
+        )
         await session.commit()
+        if not claimed.rowcount:
+            meeting = await session.get(MeetingRow, meeting_id)
+            if meeting is None:
+                raise KeyError(meeting_id)
+            log.warning("meeting.extract_skipped", meeting_id=meeting_id, status=meeting.status)
+            return {"meeting_id": meeting_id, "skipped": meeting.status}
     try:
         transcript = await _load_transcript(services, meeting_id)
         async with services.db.session() as session:

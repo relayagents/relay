@@ -178,7 +178,7 @@ async def test_extracting_a_done_meeting_again_does_not_redispatch(
 
     result = await extract_meeting({"services": services}, "mtg_twice")
 
-    assert result == {"meeting_id": "mtg_twice", "skipped": "already done"}
+    assert result == {"meeting_id": "mtg_twice", "skipped": "done"}
     assert len(services.chat.posts) == posts  # type: ignore[union-attr]
 
 
@@ -229,3 +229,31 @@ async def test_failed_handoff_leaves_the_meeting_for_the_sweeper(
     queue = ArqLikeQueue()
     await requeue_stale_meetings({"services": services, "redis": queue})
     assert [j[0:2] for j in queue.jobs] == [("extract_meeting", ("mtg_handoff",))]
+
+
+async def _meeting_with_transcript(services: Services, meeting_id: str, status: str) -> None:
+    path = services.settings.data_dir / meeting_id / "transcript.json"
+    path.parent.mkdir(parents=True)
+    path.write_text((FIXTURES / "transcript_sample.json").read_text())
+    await _add_meeting(services, meeting_id, status, transcript_path=str(path))
+
+
+async def test_a_second_ticket_backs_off_while_extraction_runs(services: Services, team) -> None:  # type: ignore[no-untyped-def]
+    """The sweep can read a ``queued`` row just before its own job claims it; if Redis is flushed
+    in that window the sweep enqueues a second ticket. That ticket must not run the meeting."""
+    await _meeting_with_transcript(services, "mtg_race", "extracting")
+
+    result = await extract_meeting({"services": services, "job_try": 1}, "mtg_race")
+
+    assert result == {"meeting_id": "mtg_race", "skipped": "extracting"}
+    assert services.chat.posts == []  # type: ignore[union-attr]
+
+
+async def test_arq_retrying_a_crashed_extraction_still_runs_it(services: Services, team) -> None:  # type: ignore[no-untyped-def]
+    """A worker that died mid-job leaves the meeting ``extracting``; arq re-runs the same job with
+    ``job_try`` > 1, and that retry must go through."""
+    await _meeting_with_transcript(services, "mtg_retry", "extracting")
+
+    result = await extract_meeting({"services": services, "job_try": 2}, "mtg_retry")
+
+    assert result["dispatch"]["summary_posted"] is True
