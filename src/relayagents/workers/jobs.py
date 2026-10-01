@@ -7,12 +7,14 @@ from pathlib import Path
 from typing import Any
 
 import structlog
+from sqlalchemy import select
 
 from relayagents.core.events import Actor, Event, TranscriptSegment
 from relayagents.core.models import MeetingRow
 from relayagents.core.projections import apply as project
 from relayagents.core.projections import distinct_topics, list_decisions
 from relayagents.core.protocols import ExtractionContext, RecentDecision, Transcript
+from relayagents.core.queue import enqueue_meeting_job
 from relayagents.core.store import EventStore
 from relayagents.tools.context import Services
 from relayagents.workers import pm
@@ -29,6 +31,10 @@ async def extract_meeting(ctx: dict[str, Any], meeting_id: str) -> dict[str, Any
         meeting = await session.get(MeetingRow, meeting_id)
         if meeting is None:
             raise KeyError(meeting_id)
+        if meeting.status == "done":
+            # A duplicate ticket (e.g. the sweeper re-driving a meeting whose original job already
+            # finished) must not append the decisions again or re-post the summary.
+            return {"meeting_id": meeting_id, "skipped": "already done"}
         meeting.status = "extracting"
         await session.commit()
     try:
@@ -89,6 +95,33 @@ async def extract_meeting(ctx: dict[str, Any], meeting_id: str) -> dict[str, Any
                 meeting.error = f"{type(exc).__name__}: {exc}"
                 await session.commit()
         raise
+
+
+IN_FLIGHT = ("queued", "transcribing", "extracting")
+
+
+async def requeue_stale_meetings(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Re-drive meetings whose queue ticket was lost (Redis flushed, or the enqueue after the
+    commit failed). Postgres says which meetings should be in flight; arq's ``_job_id``
+    uniqueness says which ones are, so re-enqueueing every non-terminal meeting is a no-op for
+    the live ones and no age threshold is needed (issue #21)."""
+    services: Services = ctx["services"]
+    async with services.db.session() as session:
+        rows = (
+            await session.execute(
+                select(MeetingRow.id, MeetingRow.status, MeetingRow.transcript_path).where(
+                    MeetingRow.status.in_(IN_FLIGHT)
+                )
+            )
+        ).all()
+    requeued = []
+    for meeting_id, status, transcript_path in rows:
+        needs_asr = status == "transcribing" or (status == "queued" and not transcript_path)
+        job = "transcribe_meeting" if needs_asr else "extract_meeting"
+        if await enqueue_meeting_job(ctx["redis"], job, meeting_id):
+            log.warning("meeting.requeued", meeting_id=meeting_id, status=status, job=job)
+            requeued.append(meeting_id)
+    return {"requeued": requeued}
 
 
 async def extraction_context(session: Any, *, recent: int = 50) -> ExtractionContext:

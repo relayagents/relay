@@ -31,7 +31,7 @@ cli/         `relay` (typer) and the HTTP client
 
 ## Data flow
 
-1. **Ingest.** `relay meeting upload` posts audio or a transcript JSON to `POST /v1/meetings`. Audio is queued on `relay:ingest`; the worker writes `transcript.json` and queues `extract_meeting` on relay-workers' `arq:queue`.
+1. **Ingest.** `relay meeting upload` posts audio or a transcript JSON to `POST /v1/meetings`. Audio is queued on `relay:ingest`; the worker writes `transcript.json` and queues `extract_meeting` on relay-workers' `arq:queue`. Both jobs use a fixed id per meeting (`<job>:<meeting_id>`), so a duplicate enqueue is a no-op. Redis tickets are not the record: `requeue_stale_meetings` runs at worker startup and hourly, re-enqueueing every `queued`/`transcribing`/`extracting` meeting, which re-drives any whose ticket was lost and leaves live ones alone.
 2. **Extraction.** `extract_meeting` appends `transcript.segment` events, runs the extractor (Pydantic AI structured output, or the deterministic keyword extractor), and appends `decision.made`, `action_item.created`, `question.opened` events, each with `provenance.segment_ids`. Projections (`action_items`, `decisions`) update in the same transaction.
 3. **PM.** The same job posts a summary to the team Slack channel and sends one A2A task per assigned item to the assignee's agent through the broker. Relay's PM has no credentials of its own.
 4. **Agents.** Each Hermes container long-polls `GET /a2a/inbox`. For an action item it typically calls `request_approval` (the human clicks in Slack), runs `gh issue create` with the human's token, then invokes a coding agent in the sandbox. The coding agent talks to Relay over MCP (`my_items`, `report`).

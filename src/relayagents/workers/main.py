@@ -16,6 +16,7 @@ from relayagents.workers.jobs import (
     extract_meeting,
     index_events,
     rebuild_graph,
+    requeue_stale_meetings,
     semantic_recall,
 )
 
@@ -53,6 +54,7 @@ class WorkerSettings:
         rebuild_graph,
         semantic_recall,
         embed_backlog,
+        requeue_stale_meetings,
     ]
     cron_jobs = [
         cron(
@@ -62,6 +64,9 @@ class WorkerSettings:
             run_at_startup=False,
         ),
         cron(embed_backlog, minute={0, 15, 30, 45}, run_at_startup=True),
+        # Startup catches the common case (Redis restarted with the stack); hourly catches the
+        # rest. Meetings aren't urgent, and a sweep of in-flight rows costs one small query.
+        cron(requeue_stale_meetings, minute=5, run_at_startup=True),
     ]
     on_startup = startup
     on_shutdown = shutdown

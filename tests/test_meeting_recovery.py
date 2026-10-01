@@ -1,4 +1,4 @@
-"""Meetings reach the worker that runs their next job, and re-drive when a ticket is lost."""
+"""Meetings whose queue ticket was lost get re-driven from Postgres (issue #21)."""
 
 from __future__ import annotations
 
@@ -6,55 +6,186 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import httpx
+import pytest
+
 from relayagents.core.models import MeetingRow
 from relayagents.core.queue import INGEST_QUEUE, WORKER_QUEUE
 from relayagents.ingest.worker import transcribe_meeting
 from relayagents.tools.context import Services
+from relayagents.workers.jobs import extract_meeting, requeue_stale_meetings
+from relayagents.workers.main import WorkerSettings
 
-from .conftest import FIXTURES
+from .conftest import FIXTURES, auth
 
 
 class ArqLikeQueue:
-    """Mirrors arq's contract that ``_queue_name=None`` means the pool's default queue, which
-    inside a worker is that worker's own queue."""
+    """Mirrors two arq contracts: while a job with a given ``_job_id`` is queued, running, or
+    holding a result, ``enqueue_job`` is a no-op that returns ``None``; and ``_queue_name=None``
+    means the pool's default queue, which inside a worker is that worker's own queue."""
 
-    def __init__(self, default_queue: str = WORKER_QUEUE) -> None:
+    def __init__(self, held: set[str] | None = None, default_queue: str = WORKER_QUEUE) -> None:
+        self.held = set(held or ())
         self.default_queue = default_queue
-        self.jobs: list[tuple[str, tuple[Any, ...], str | None]] = []
+        self.jobs: list[tuple[str, tuple[Any, ...], str | None, str | None]] = []
 
     async def enqueue_job(
-        self, function: str, *args: Any, _queue_name: str | None = None, **_: Any
+        self,
+        function: str,
+        *args: Any,
+        _job_id: str | None = None,
+        _queue_name: str | None = None,
+        **_: Any,
     ) -> object | None:
-        self.jobs.append((function, args, _queue_name or self.default_queue))
+        if _job_id is not None and _job_id in self.held:
+            return None
+        if _job_id is not None:
+            self.held.add(_job_id)
+        self.jobs.append((function, args, _job_id, _queue_name or self.default_queue))
         return object()
 
 
-async def test_transcription_hands_off_to_the_extraction_workers(
-    services: Services, tmp_path: Path
+async def _add_meeting(
+    services: Services,
+    meeting_id: str,
+    status: str,
+    *,
+    transcript_path: str | None = None,
+    audio_path: str | None = None,
 ) -> None:
-    from relayagents.ingest.fixture import FixtureTranscriber
-
-    audio = tmp_path / "mtg_ingest" / "audio.wav"
-    audio.parent.mkdir()
-    audio.write_bytes(b"RIFF0000WAVE")
-    audio.with_suffix(".json").write_text((FIXTURES / "transcript_sample.json").read_text())
     async with services.db.session() as session:
         session.add(
             MeetingRow(
-                id="mtg_ingest",
-                title="mtg_ingest",
-                status="queued",
-                audio_path=str(audio),
+                id=meeting_id,
+                title=meeting_id,
+                status=status,
+                transcript_path=transcript_path,
+                audio_path=audio_path,
                 participants=["ada"],
                 created_by="ada",
                 created_at=datetime.now(UTC),
             )
         )
         await session.commit()
+
+
+async def test_sweeper_requeues_each_in_flight_meeting_to_its_next_job(services: Services) -> None:
+    await _add_meeting(services, "mtg_upload", "queued", transcript_path="/t.json")
+    await _add_meeting(services, "mtg_audio", "queued", audio_path="/a.wav")
+    await _add_meeting(services, "mtg_asr", "transcribing", audio_path="/a.wav")
+    await _add_meeting(services, "mtg_llm", "extracting", transcript_path="/t.json")
+    await _add_meeting(services, "mtg_done", "done", transcript_path="/t.json")
+    await _add_meeting(services, "mtg_failed", "failed", audio_path="/a.wav")
+    queue = ArqLikeQueue()
+
+    result = await requeue_stale_meetings({"services": services, "redis": queue})
+
+    assert sorted(queue.jobs) == [
+        ("extract_meeting", ("mtg_llm",), "extract_meeting:mtg_llm", WORKER_QUEUE),
+        ("extract_meeting", ("mtg_upload",), "extract_meeting:mtg_upload", WORKER_QUEUE),
+        ("transcribe_meeting", ("mtg_asr",), "transcribe_meeting:mtg_asr", INGEST_QUEUE),
+        ("transcribe_meeting", ("mtg_audio",), "transcribe_meeting:mtg_audio", INGEST_QUEUE),
+    ]
+    assert sorted(result["requeued"]) == ["mtg_asr", "mtg_audio", "mtg_llm", "mtg_upload"]
+
+
+async def test_sweeper_leaves_meetings_whose_job_arq_still_holds(services: Services) -> None:
+    await _add_meeting(services, "mtg_live", "extracting", transcript_path="/t.json")
+    await _add_meeting(services, "mtg_lost", "extracting", transcript_path="/t.json")
+    queue = ArqLikeQueue(held={"extract_meeting:mtg_live"})
+
+    result = await requeue_stale_meetings({"services": services, "redis": queue})
+
+    assert [j[0:2] for j in queue.jobs] == [("extract_meeting", ("mtg_lost",))]
+    assert result["requeued"] == ["mtg_lost"]
+
+
+async def test_upload_enqueues_under_the_id_the_sweeper_uses(
+    client: httpx.AsyncClient, app, team, services: Services
+) -> None:  # type: ignore[no-untyped-def]
+    queue = ArqLikeQueue()
+    app.state.redis = queue
+    transcript = (FIXTURES / "transcript_sample.json").read_bytes()
+    r = await client.post(
+        "/v1/meetings",
+        files={"transcript": ("t.json", transcript, "application/json")},
+        headers=auth(team["ada"]["human"]),
+    )
+    assert r.status_code == 202
+    meeting_id = r.json()["id"]
+
+    assert queue.jobs == [
+        ("extract_meeting", (meeting_id,), f"extract_meeting:{meeting_id}", WORKER_QUEUE)
+    ]
+    await requeue_stale_meetings({"services": services, "redis": queue})
+    assert len(queue.jobs) == 1  # the sweeper's enqueue was deduplicated against the upload's
+
+
+async def test_audio_upload_enqueues_transcription_under_a_fixed_id(
+    client: httpx.AsyncClient, app, team
+) -> None:  # type: ignore[no-untyped-def]
+    queue = ArqLikeQueue()
+    app.state.redis = queue
+    r = await client.post(
+        "/v1/meetings",
+        files={"audio": ("m.wav", b"RIFF0000WAVE", "audio/wav")},
+        headers=auth(team["ada"]["human"]),
+    )
+    assert r.status_code == 202
+    meeting_id = r.json()["id"]
+    assert queue.jobs == [
+        ("transcribe_meeting", (meeting_id,), f"transcribe_meeting:{meeting_id}", INGEST_QUEUE)
+    ]
+
+
+async def test_transcription_hands_off_under_a_fixed_id(services: Services, tmp_path: Path) -> None:
+    from relayagents.ingest.fixture import FixtureTranscriber
+
+    audio = tmp_path / "mtg_ingest" / "audio.wav"
+    audio.parent.mkdir()
+    audio.write_bytes(b"RIFF0000WAVE")
+    audio.with_suffix(".json").write_text((FIXTURES / "transcript_sample.json").read_text())
+    await _add_meeting(services, "mtg_ingest", "queued", audio_path=str(audio))
     queue = ArqLikeQueue(default_queue=INGEST_QUEUE)  # the ingest worker's own pool
 
     await transcribe_meeting(
         {"db": services.db, "transcriber": FixtureTranscriber(), "redis": queue}, "mtg_ingest"
     )
 
-    assert queue.jobs == [("extract_meeting", ("mtg_ingest",), WORKER_QUEUE)]
+    assert queue.jobs == [
+        ("extract_meeting", ("mtg_ingest",), "extract_meeting:mtg_ingest", WORKER_QUEUE)
+    ]
+
+
+async def test_extracting_a_done_meeting_again_does_not_redispatch(
+    services: Services, team
+) -> None:  # type: ignore[no-untyped-def]
+    path = services.settings.data_dir / "m" / "transcript.json"
+    path.parent.mkdir(parents=True)
+    path.write_text((FIXTURES / "transcript_sample.json").read_text())
+    await _add_meeting(services, "mtg_twice", "queued", transcript_path=str(path))
+    await extract_meeting({"services": services}, "mtg_twice")
+    posts = len(services.chat.posts)  # type: ignore[union-attr]
+
+    result = await extract_meeting({"services": services}, "mtg_twice")
+
+    assert result == {"meeting_id": "mtg_twice", "skipped": "already done"}
+    assert len(services.chat.posts) == posts  # type: ignore[union-attr]
+
+
+def test_sweeper_runs_at_worker_startup() -> None:
+    sweeps = [c for c in WorkerSettings.cron_jobs if c.name.endswith("requeue_stale_meetings")]
+    assert len(sweeps) == 1 and sweeps[0].run_at_startup
+
+
+async def test_transcribing_a_meeting_without_audio_marks_it_failed(services: Services) -> None:
+    """Otherwise it stays ``queued`` and the sweeper retries it every hour forever."""
+    await _add_meeting(services, "mtg_silent", "queued")
+
+    with pytest.raises(RuntimeError, match="no audio"):
+        await transcribe_meeting({"db": services.db, "redis": ArqLikeQueue()}, "mtg_silent")
+
+    async with services.db.session() as session:
+        meeting = await session.get(MeetingRow, "mtg_silent")
+    assert meeting is not None and meeting.status == "failed"
+    assert meeting.error == "RuntimeError: meeting has no audio"

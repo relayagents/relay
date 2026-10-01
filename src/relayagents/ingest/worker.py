@@ -15,7 +15,7 @@ from relayagents.core.db import Database
 from relayagents.core.models import MeetingRow
 from relayagents.core.queue import (
     INGEST_QUEUE,
-    WORKER_QUEUE,
+    enqueue_meeting_job,
     job_deserializer,
     job_serializer,
 )
@@ -44,6 +44,9 @@ async def transcribe_meeting(ctx: dict[str, Any], meeting_id: str) -> str:
         if meeting is None:
             raise KeyError(meeting_id)
         if not meeting.audio_path:
+            # Terminal, so the stale-meeting sweeper doesn't keep re-driving it.
+            meeting.status, meeting.error = "failed", "RuntimeError: meeting has no audio"
+            await session.commit()
             raise RuntimeError("meeting has no audio")
         meeting.status = "transcribing"
         audio = Path(meeting.audio_path)
@@ -60,7 +63,7 @@ async def transcribe_meeting(ctx: dict[str, Any], meeting_id: str) -> str:
             meeting.transcript_path = str(out)
             meeting.status = "queued"
             await session.commit()
-        await ctx["redis"].enqueue_job("extract_meeting", meeting_id, _queue_name=WORKER_QUEUE)
+        await enqueue_meeting_job(ctx["redis"], "extract_meeting", meeting_id)  # → relay-workers
         log.info("meeting.transcribed", meeting_id=meeting_id, segments=len(transcript.segments))
         return str(out)
     except Exception as exc:
