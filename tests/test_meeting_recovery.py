@@ -198,3 +198,34 @@ async def test_transcribing_a_meeting_without_audio_marks_it_failed(services: Se
         meeting = await session.get(MeetingRow, "mtg_silent")
     assert meeting is not None and meeting.status == "failed"
     assert meeting.error == "RuntimeError: meeting has no audio"
+
+
+async def test_failed_handoff_leaves_the_meeting_for_the_sweeper(
+    services: Services, tmp_path: Path
+) -> None:
+    """Transcription succeeded, so a Redis error on the handoff must not mark the meeting failed:
+    it stays ``queued`` with its transcript and the next sweep enqueues the extraction."""
+    from relayagents.ingest.fixture import FixtureTranscriber
+
+    class DownQueue:
+        async def enqueue_job(self, *args: Any, **kwargs: Any) -> None:
+            raise ConnectionError("redis unavailable")
+
+    audio = tmp_path / "mtg_handoff" / "audio.wav"
+    audio.parent.mkdir()
+    audio.write_bytes(b"RIFF0000WAVE")
+    audio.with_suffix(".json").write_text((FIXTURES / "transcript_sample.json").read_text())
+    await _add_meeting(services, "mtg_handoff", "queued", audio_path=str(audio))
+
+    with pytest.raises(ConnectionError):
+        await transcribe_meeting(
+            {"db": services.db, "transcriber": FixtureTranscriber(), "redis": DownQueue()},
+            "mtg_handoff",
+        )
+
+    async with services.db.session() as session:
+        meeting = await session.get(MeetingRow, "mtg_handoff")
+    assert meeting is not None and meeting.status == "queued" and meeting.transcript_path
+    queue = ArqLikeQueue()
+    await requeue_stale_meetings({"services": services, "redis": queue})
+    assert [j[0:2] for j in queue.jobs] == [("extract_meeting", ("mtg_handoff",))]

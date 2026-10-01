@@ -63,9 +63,6 @@ async def transcribe_meeting(ctx: dict[str, Any], meeting_id: str) -> str:
             meeting.transcript_path = str(out)
             meeting.status = "queued"
             await session.commit()
-        await enqueue_meeting_job(ctx["redis"], "extract_meeting", meeting_id)  # → relay-workers
-        log.info("meeting.transcribed", meeting_id=meeting_id, segments=len(transcript.segments))
-        return str(out)
     except Exception as exc:
         async with db.session() as session:
             meeting = await session.get(MeetingRow, meeting_id)
@@ -73,6 +70,11 @@ async def transcribe_meeting(ctx: dict[str, Any], meeting_id: str) -> str:
                 meeting.status, meeting.error = "failed", f"{type(exc).__name__}: {exc}"
                 await session.commit()
         raise
+    log.info("meeting.transcribed", meeting_id=meeting_id, segments=len(transcript.segments))
+    # Outside the try: the transcript is saved and the meeting is `queued`, so a failed enqueue
+    # leaves it for requeue_stale_meetings instead of marking finished work as failed.
+    await enqueue_meeting_job(ctx["redis"], "extract_meeting", meeting_id)  # → relay-workers
+    return str(out)
 
 
 def _resolve_speakers(segments: list[Any], participants: list[str]) -> list[Any]:
