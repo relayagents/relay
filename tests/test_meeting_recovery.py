@@ -69,11 +69,9 @@ async def _add_meeting(
         await session.commit()
 
 
-async def test_sweeper_requeues_each_in_flight_meeting_to_its_next_job(services: Services) -> None:
+async def test_sweeper_requeues_each_queued_meeting_to_its_next_job(services: Services) -> None:
     await _add_meeting(services, "mtg_upload", "queued", transcript_path="/t.json")
     await _add_meeting(services, "mtg_audio", "queued", audio_path="/a.wav")
-    await _add_meeting(services, "mtg_asr", "transcribing", audio_path="/a.wav")
-    await _add_meeting(services, "mtg_llm", "extracting", transcript_path="/t.json")
     await _add_meeting(services, "mtg_done", "done", transcript_path="/t.json")
     await _add_meeting(services, "mtg_failed", "failed", audio_path="/a.wav")
     queue = ArqLikeQueue()
@@ -81,17 +79,28 @@ async def test_sweeper_requeues_each_in_flight_meeting_to_its_next_job(services:
     result = await requeue_stale_meetings({"services": services, "redis": queue})
 
     assert sorted(queue.jobs) == [
-        ("extract_meeting", ("mtg_llm",), "extract_meeting:mtg_llm", WORKER_QUEUE),
         ("extract_meeting", ("mtg_upload",), "extract_meeting:mtg_upload", WORKER_QUEUE),
-        ("transcribe_meeting", ("mtg_asr",), "transcribe_meeting:mtg_asr", INGEST_QUEUE),
         ("transcribe_meeting", ("mtg_audio",), "transcribe_meeting:mtg_audio", INGEST_QUEUE),
     ]
-    assert sorted(result["requeued"]) == ["mtg_asr", "mtg_audio", "mtg_llm", "mtg_upload"]
+    assert sorted(result["requeued"]) == ["mtg_audio", "mtg_upload"]
+
+
+async def test_sweeper_never_starts_a_second_run_of_a_running_job(services: Services) -> None:
+    """A meeting is only ``transcribing``/``extracting`` while its job runs. If Redis loses that
+    job's key, the run still finishes and advances the meeting itself; re-driving it would race the
+    live run and post the summary twice (#22)."""
+    await _add_meeting(services, "mtg_asr", "transcribing", audio_path="/a.wav")
+    await _add_meeting(services, "mtg_llm", "extracting", transcript_path="/t.json")
+    queue = ArqLikeQueue()  # empty: as if Redis were wiped mid-run
+
+    result = await requeue_stale_meetings({"services": services, "redis": queue})
+
+    assert queue.jobs == [] and result["requeued"] == []
 
 
 async def test_sweeper_leaves_meetings_whose_job_arq_still_holds(services: Services) -> None:
-    await _add_meeting(services, "mtg_live", "extracting", transcript_path="/t.json")
-    await _add_meeting(services, "mtg_lost", "extracting", transcript_path="/t.json")
+    await _add_meeting(services, "mtg_live", "queued", transcript_path="/t.json")
+    await _add_meeting(services, "mtg_lost", "queued", transcript_path="/t.json")
     queue = ArqLikeQueue(held={"extract_meeting:mtg_live"})
 
     result = await requeue_stale_meetings({"services": services, "redis": queue})

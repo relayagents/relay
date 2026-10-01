@@ -97,29 +97,30 @@ async def extract_meeting(ctx: dict[str, Any], meeting_id: str) -> dict[str, Any
         raise
 
 
-IN_FLIGHT = ("queued", "transcribing", "extracting")
-
-
 async def requeue_stale_meetings(ctx: dict[str, Any]) -> dict[str, Any]:
     """Re-drive meetings whose queue ticket was lost (Redis flushed, or the enqueue after the
-    commit failed). Postgres says which meetings should be in flight; arq's ``_job_id``
-    uniqueness says which ones are, so re-enqueueing every non-terminal meeting is a no-op for
-    the live ones and no age threshold is needed (issue #21)."""
+    commit failed). A ``queued`` meeting has nothing running, and arq's ``_job_id`` uniqueness
+    makes re-enqueueing it a no-op while its ticket still exists, so no age threshold is needed
+    (issue #21).
+
+    ``transcribing``/``extracting`` are left alone: those statuses mean a job is running, and a run
+    advances the meeting itself even if Redis loses its key. Re-driving one would race that run
+    and dispatch twice. A meeting stays stuck only if Redis and the running worker are both lost
+    mid-job (#22)."""
     services: Services = ctx["services"]
     async with services.db.session() as session:
         rows = (
             await session.execute(
-                select(MeetingRow.id, MeetingRow.status, MeetingRow.transcript_path).where(
-                    MeetingRow.status.in_(IN_FLIGHT)
+                select(MeetingRow.id, MeetingRow.transcript_path).where(
+                    MeetingRow.status == "queued"
                 )
             )
         ).all()
     requeued = []
-    for meeting_id, status, transcript_path in rows:
-        needs_asr = status == "transcribing" or (status == "queued" and not transcript_path)
-        job = "transcribe_meeting" if needs_asr else "extract_meeting"
+    for meeting_id, transcript_path in rows:
+        job = "extract_meeting" if transcript_path else "transcribe_meeting"
         if await enqueue_meeting_job(ctx["redis"], job, meeting_id):
-            log.warning("meeting.requeued", meeting_id=meeting_id, status=status, job=job)
+            log.warning("meeting.requeued", meeting_id=meeting_id, job=job)
             requeued.append(meeting_id)
     return {"requeued": requeued}
 
