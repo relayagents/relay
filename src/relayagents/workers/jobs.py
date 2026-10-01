@@ -7,12 +7,14 @@ from pathlib import Path
 from typing import Any
 
 import structlog
+from sqlalchemy import select, update
 
 from relayagents.core.events import Actor, Event, TranscriptSegment
 from relayagents.core.models import MeetingRow
 from relayagents.core.projections import apply as project
 from relayagents.core.projections import distinct_topics, list_decisions
 from relayagents.core.protocols import ExtractionContext, RecentDecision, Transcript
+from relayagents.core.queue import enqueue_meeting_job
 from relayagents.core.store import EventStore
 from relayagents.tools.context import Services
 from relayagents.workers import pm
@@ -25,12 +27,24 @@ log = structlog.get_logger()
 async def extract_meeting(ctx: dict[str, Any], meeting_id: str) -> dict[str, Any]:
     """Transcript (from file or from transcript.segment events) → decision/item/question events → PM."""
     services: Services = ctx["services"]
+    # Claim the meeting with a compare-and-set, so a duplicate ticket (the sweep re-driving a
+    # meeting another job just claimed, or one that already finished) backs off instead of
+    # appending the decisions again and re-posting the summary. The one legitimate rerun of an
+    # `extracting` meeting is arq retrying a job whose worker died, which arq marks with job_try.
+    claimable = ["queued", "extracting"] if ctx.get("job_try", 1) > 1 else ["queued"]
     async with services.db.session() as session:
-        meeting = await session.get(MeetingRow, meeting_id)
-        if meeting is None:
-            raise KeyError(meeting_id)
-        meeting.status = "extracting"
+        claimed = await session.execute(
+            update(MeetingRow)
+            .where(MeetingRow.id == meeting_id, MeetingRow.status.in_(claimable))
+            .values(status="extracting")
+        )
         await session.commit()
+        if not claimed.rowcount:
+            meeting = await session.get(MeetingRow, meeting_id)
+            if meeting is None:
+                raise KeyError(meeting_id)
+            log.warning("meeting.extract_skipped", meeting_id=meeting_id, status=meeting.status)
+            return {"meeting_id": meeting_id, "skipped": meeting.status}
     try:
         transcript = await _load_transcript(services, meeting_id)
         async with services.db.session() as session:
@@ -89,6 +103,34 @@ async def extract_meeting(ctx: dict[str, Any], meeting_id: str) -> dict[str, Any
                 meeting.error = f"{type(exc).__name__}: {exc}"
                 await session.commit()
         raise
+
+
+async def requeue_stale_meetings(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Re-drive meetings whose queue ticket was lost (Redis flushed, or the enqueue after the
+    commit failed). A ``queued`` meeting has nothing running, and arq's ``_job_id`` uniqueness
+    makes re-enqueueing it a no-op while its ticket still exists, so no age threshold is needed
+    (issue #21).
+
+    ``transcribing``/``extracting`` are left alone: those statuses mean a job is running, and a run
+    advances the meeting itself even if Redis loses its key. Re-driving one would race that run
+    and dispatch twice. A meeting stays stuck only if Redis and the running worker are both lost
+    mid-job (#22)."""
+    services: Services = ctx["services"]
+    async with services.db.session() as session:
+        rows = (
+            await session.execute(
+                select(MeetingRow.id, MeetingRow.transcript_path).where(
+                    MeetingRow.status == "queued"
+                )
+            )
+        ).all()
+    requeued = []
+    for meeting_id, transcript_path in rows:
+        job = "extract_meeting" if transcript_path else "transcribe_meeting"
+        if await enqueue_meeting_job(ctx["redis"], job, meeting_id):
+            log.warning("meeting.requeued", meeting_id=meeting_id, job=job)
+            requeued.append(meeting_id)
+    return {"requeued": requeued}
 
 
 async def extraction_context(session: Any, *, recent: int = 50) -> ExtractionContext:

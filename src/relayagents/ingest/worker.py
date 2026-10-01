@@ -13,11 +13,15 @@ from arq.connections import RedisSettings
 from relayagents.core.config import get_settings
 from relayagents.core.db import Database
 from relayagents.core.models import MeetingRow
-from relayagents.core.queue import job_deserializer, job_serializer
+from relayagents.core.queue import (
+    INGEST_QUEUE,
+    enqueue_meeting_job,
+    job_deserializer,
+    job_serializer,
+)
 from relayagents.ingest.fixture import FixtureTranscriber
 
 log = structlog.get_logger()
-INGEST_QUEUE = "relay:ingest"
 
 
 def make_transcriber(settings: Any) -> Any:
@@ -40,6 +44,9 @@ async def transcribe_meeting(ctx: dict[str, Any], meeting_id: str) -> str:
         if meeting is None:
             raise KeyError(meeting_id)
         if not meeting.audio_path:
+            # Terminal, so the stale-meeting sweeper doesn't keep re-driving it.
+            meeting.status, meeting.error = "failed", "RuntimeError: meeting has no audio"
+            await session.commit()
             raise RuntimeError("meeting has no audio")
         meeting.status = "transcribing"
         audio = Path(meeting.audio_path)
@@ -56,11 +63,6 @@ async def transcribe_meeting(ctx: dict[str, Any], meeting_id: str) -> str:
             meeting.transcript_path = str(out)
             meeting.status = "queued"
             await session.commit()
-        await ctx["redis"].enqueue_job(
-            "extract_meeting", meeting_id
-        )  # default queue → relay-workers
-        log.info("meeting.transcribed", meeting_id=meeting_id, segments=len(transcript.segments))
-        return str(out)
     except Exception as exc:
         async with db.session() as session:
             meeting = await session.get(MeetingRow, meeting_id)
@@ -68,6 +70,11 @@ async def transcribe_meeting(ctx: dict[str, Any], meeting_id: str) -> str:
                 meeting.status, meeting.error = "failed", f"{type(exc).__name__}: {exc}"
                 await session.commit()
         raise
+    log.info("meeting.transcribed", meeting_id=meeting_id, segments=len(transcript.segments))
+    # Outside the try: the transcript is saved and the meeting is `queued`, so a failed enqueue
+    # leaves it for requeue_stale_meetings instead of marking finished work as failed.
+    await enqueue_meeting_job(ctx["redis"], "extract_meeting", meeting_id)  # → relay-workers
+    return str(out)
 
 
 def _resolve_speakers(segments: list[Any], participants: list[str]) -> list[Any]:
