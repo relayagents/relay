@@ -621,3 +621,24 @@ def test_setup_agent_env_file_keeps_the_token_out_of_the_output(tmp_path, monkey
     assert result.exit_code == 0, result.output
     assert TOKEN not in result.output
     assert envrc.read_text() == f"export RELAY_CODEX_TOKEN={TOKEN}\n"
+
+
+def test_setup_agent_keeps_the_new_token_when_listing_fails(tmp_path, monkeypatch) -> None:
+    # The steps succeeded and the new token is in use; only retiring the old one failed.
+    fake = _FakeClient()
+
+    def down(path: str) -> list[dict]:
+        raise RuntimeError("503 Service Unavailable")
+
+    fake.get = down
+    project = tmp_path / "proj"
+    project.mkdir()
+    monkeypatch.setattr(main, "_client", lambda: fake)
+    monkeypatch.setattr(s, "project_root", lambda p: p)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    result = CliRunner().invoke(
+        main.app, ["setup-agent", "codex", "--project", str(project), "--write"]
+    )
+    assert result.exit_code == 0, result.output
+    assert fake.revoked == []  # the working token stays
+    assert "may still be live. Rerun setup-agent" in result.output

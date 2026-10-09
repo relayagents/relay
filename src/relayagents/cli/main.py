@@ -225,9 +225,21 @@ def setup_agent(
         typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(1) from exc
     if minted:
+        # Setup is done and the new token is in use: a failure from here on must not undo it.
+        try:
+            tokens = c.get("/v1/tokens")
+        except Exception as exc:
+            typer.secho(
+                f"warning: connected, but could not list earlier tokens to revoke ({exc});"
+                " an earlier token for this project may still be live. Rerun setup-agent to"
+                " retire it.",
+                fg=typer.colors.YELLOW,
+                err=True,
+            )
+            return
         previous = [
             t["token_id"]
-            for t in c.get("/v1/tokens")
+            for t in tokens
             if t["label"] == label and t["token_id"] != minted["token_id"] and not t["revoked_at"]
         ]
         if previous:
