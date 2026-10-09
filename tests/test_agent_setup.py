@@ -358,3 +358,12 @@ def test_setup_agent_rejects_unknown_agent() -> None:
     result = CliRunner().invoke(main.app, ["setup-agent", "cursor"])
     assert result.exit_code == 1
     assert "unknown agent" in result.output
+
+
+def test_hermes_config_carries_the_minted_token(tmp_path: Path) -> None:
+    (step,) = s.plan("hermes", URL, TOKEN, tmp_path / "anywhere", home=tmp_path).steps
+    assert isinstance(step, s.AppendFile)
+    assert step.path == tmp_path / ".hermes" / "config.yaml"
+    assert f"Authorization: Bearer {TOKEN}" in step.content
+    s.apply(step)
+    assert f"Authorization: Bearer {TOKEN}" in step.path.read_text()
