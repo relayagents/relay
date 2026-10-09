@@ -82,5 +82,10 @@ class RelayClient:
         self._raise(r)
         return r.json()
 
+    def delete(self, path: str) -> Any:
+        r = self.http.delete(path)
+        self._raise(r)
+        return r.json()
+
     def whoami(self) -> dict[str, Any]:
         return self.get("/v1/me")  # type: ignore[no-any-return]
