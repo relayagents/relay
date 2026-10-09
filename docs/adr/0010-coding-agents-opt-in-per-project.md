@@ -24,6 +24,7 @@ What the harnesses support, checked against their docs in October 2026:
 | Claude Code | `claude mcp add --scope local` (private, keyed to the folder); plugins enable per project | yes | via plugin, enabled per project |
 | Codex | `.codex/config.toml` in trusted projects | `bearer_token_env_var` | `.agents/skills` in the repo, or `~/.agents/skills` |
 | OpenCode | `opencode.json` at the project root | `{env:NAME}` | `.agents/skills`, `~/.agents/skills`, and others |
+| Cursor | `.cursor/mcp.json` in the project | `${env:NAME}` | `.agents/skills`, `~/.agents/skills`, and others |
 | Hermes | no; `~/.hermes/config.yaml` only | n/a | `skills.external_dirs` |
 
 A behavior test settled what the skill must say. Given only today's MCP instructions, agents
@@ -44,9 +45,10 @@ nothing regressed.
    - Claude Code: install and enable the plugin at local scope and add the MCP server at local
      scope. The plugin ships with `defaultEnabled: false`, so a user-wide install by mistake stays
      off.
-   - Codex and OpenCode: write the project's MCP config with the token read from
-     `RELAY_CODEX_TOKEN` / `RELAY_OPENCODE_TOKEN` (not `RELAY_TOKEN`, which the `relay` CLI prefers
-     over its login), and install the skill at `~/.agents/skills/relay`.
+   - Codex, OpenCode, and Cursor: write the project's MCP config with the token read from
+     `RELAY_CODEX_TOKEN` / `RELAY_OPENCODE_TOKEN` / `RELAY_CURSOR_TOKEN` (not `RELAY_TOKEN`, which
+     the `relay` CLI prefers over its login), and install the skill at `~/.agents/skills/relay`,
+     which all three read.
    - Hermes is unchanged: it runs in the team's container, where Relay is always on.
 
    Each run mints one agent token labelled for this agent, project, and machine, and revokes the
@@ -79,7 +81,7 @@ nothing regressed.
 
 ## Revisit if
 
-Hermes gains project-scoped MCP or skills; Codex or OpenCode gains a private per-user project
+Hermes gains project-scoped MCP or skills; Codex, OpenCode, or Cursor gains a private per-user project
 config (then setup-agent should stop writing a file into the repo); Claude Code plugin
 dependencies gain a per-project mode (then `lab-core` could depend on Relay); or the skill grows
 past what one file can hold.

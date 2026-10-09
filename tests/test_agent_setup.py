@@ -172,6 +172,43 @@ def test_opencode_config_refuses_jsonc() -> None:
         s.merge_opencode_config('{ // comment\n "a": 1 }', URL, "RELAY_OPENCODE_TOKEN")
 
 
+# ---- Cursor --------------------------------------------------------------------------------------
+
+
+def test_cursor_config_reads_the_token_from_env() -> None:
+    existing = json.dumps({"mcpServers": {"other": {"command": "npx", "args": ["x"]}}})
+    merged = s.merge_cursor_config(existing, URL, "RELAY_CURSOR_TOKEN")
+    data = json.loads(merged)
+    assert data["mcpServers"]["other"] == {"command": "npx", "args": ["x"]}
+    assert data["mcpServers"]["relay"] == {
+        "url": f"{URL}/mcp",
+        "headers": {"Authorization": "Bearer ${env:RELAY_CURSOR_TOKEN}"},
+    }
+    assert json.loads(s.merge_cursor_config("", URL, "RELAY_CURSOR_TOKEN")) == {
+        "mcpServers": {"relay": data["mcpServers"]["relay"]}
+    }
+    with pytest.raises(s.SetupError, match="not plain JSON"):
+        s.merge_cursor_config("{ // c\n }", URL, "RELAY_CURSOR_TOKEN")
+    with pytest.raises(s.SetupError, match='"mcpServers" key that is not an object'):
+        s.merge_cursor_config('{"mcpServers": []}', URL, "RELAY_CURSOR_TOKEN")
+
+
+def test_cursor_plan(tmp_path: Path) -> None:
+    home, project = tmp_path / "home", tmp_path / "proj"
+    (home / ".cursor").mkdir(parents=True)
+    (home / ".cursor" / "mcp.json").write_text('{"mcpServers": {"relay": {"url": "x"}}}')
+    plan = s.plan("cursor", URL, TOKEN, project, home=home)
+    write = next(st for st in plan.steps if isinstance(st, s.WriteFile))
+    assert write.path == project / ".cursor" / "mcp.json"
+    assert TOKEN not in write.content
+    assert [st.dest for st in plan.steps if isinstance(st, s.InstallSkill)] == [
+        home / ".agents" / "skills" / "relay"
+    ]
+    notes = "\n".join(st.text for st in plan.steps if isinstance(st, s.Note))
+    assert "connects Relay in every project" in notes
+    assert f"export RELAY_CURSOR_TOKEN={TOKEN}" in notes
+
+
 # ---- skill install -------------------------------------------------------------------------------
 
 
@@ -322,7 +359,7 @@ def test_setup_agent_mints_no_token_when_the_config_cannot_be_merged(tmp_path, m
     assert fake.minted == []
 
 
-@pytest.mark.parametrize("agent", ["claude-code", "codex", "opencode"])
+@pytest.mark.parametrize("agent", s.PROJECT_AGENTS)
 def test_home_folder_is_not_a_project(tmp_path: Path, agent: str) -> None:
     # From ~, Codex's project config would be its user-wide ~/.codex/config.toml.
     with pytest.raises(s.SetupError, match="not a project"):
@@ -355,7 +392,7 @@ def test_token_label_is_per_project_and_fits_the_api(tmp_path: Path) -> None:
 
 
 def test_setup_agent_rejects_unknown_agent() -> None:
-    result = CliRunner().invoke(main.app, ["setup-agent", "cursor"])
+    result = CliRunner().invoke(main.app, ["setup-agent", "windsurf"])
     assert result.exit_code == 1
     assert "unknown agent" in result.output
 

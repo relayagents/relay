@@ -18,11 +18,11 @@ MCP tools from a server named `relay` (shown as `recall`, or with a prefix such 
 - **Tools present:** use them as below.
 - **Tools absent, and a file in this project turns Relay on** (`.claude/settings.json` or
   `.claude/settings.local.json` enables `relay@relayagents`, `.codex/config.toml` has
-  `[mcp_servers.relay]`, or `opencode.json` has `mcp.relay`): Relay is meant to be on but is
-  not connected. Do the user's task, then tell them once: run
-  `relay setup-agent <claude-code|codex|opencode> --write` in the project root and start a new
-  session. For Codex or OpenCode, also check that `RELAY_CODEX_TOKEN` or `RELAY_OPENCODE_TOKEN`
-  is set.
+  `[mcp_servers.relay]`, `opencode.json` has `mcp.relay`, or `.cursor/mcp.json` has
+  `mcpServers.relay`): Relay is meant to be on but is not connected. Do the user's task, then
+  tell them once: run `relay setup-agent <claude-code|codex|opencode|cursor> --write` in the
+  project root and start a new session. For Codex, OpenCode, or Cursor, also check that
+  `RELAY_CODEX_TOKEN`, `RELAY_OPENCODE_TOKEN`, or `RELAY_CURSOR_TOKEN` is set.
 - **Tools absent otherwise:** this project is not on Relay. Do not mention Relay.
 
 **Never use the `relay` shell command in place of the tools.** It is logged in as your human, not
