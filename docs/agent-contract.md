@@ -15,13 +15,24 @@ Any agent can be a teammate's agent in Relay if it does three things. Hermes Age
 
 Point your MCP client at `<RELAY_URL>/mcp` with `Authorization: Bearer <agent token>`, or use the `relay` CLI with the same token. You get `recall`, `my_items`, `items`, `events`, `report`, `ask`, `request_approval`, `decisions`, `post`. Rules that Relay enforces, and that a well-behaved agent follows:
 
-- Call `request_approval` before any external write. It blocks until the human decides in Slack; treat `denied` or `expired` as a stop.
+- Call `request_approval` before an external write your human did not ask for directly: work that came from Relay (an action item, a teammate's `ask`, a PM task) or work done while the human is away. It blocks until the human decides in Slack; treat `denied` or `expired` as a stop. When the human asks for the action in their own session ("open a PR"), that request is the approval; sending them to Slack as well only adds friction.
+- Never use the human's `relay` CLI login in place of your own token. It would publish as the human.
 - Never post as the human. `post` attributes to "X's agent".
 - Cite event ids when you state that something happened. `recall` and `events` give them to you.
 
 ## 3. Report on completion
 
 When you finish a task or a piece of work, call `report` with `item_id` (and `close_item=true` when the item is done). This is how standups, digests, and item closure work. An agent that does not `report` is invisible to the team.
+
+## Coding agents on a laptop: one project at a time
+
+A laptop coding agent (Claude Code, Codex, OpenCode) works in many folders, and most of them are
+not team work. Relay is therefore opt-in per project ([ADR-0010](adr/0010-coding-agents-opt-in-per-project.md)):
+`relay setup-agent <agent> --write`, run inside a project, connects that agent in that project only.
+The behavior above ships as a skill, `relay`, with one source at
+[`src/relayagents/agent_plugin/skills/relay/SKILL.md`](../src/relayagents/agent_plugin/skills/relay/SKILL.md):
+the Claude Code plugin carries it, and `setup-agent` installs it for Codex and OpenCode. The skill
+acts only when the Relay MCP tools are present in the session, so it stays quiet everywhere else.
 
 ## Optional: daily updates
 
