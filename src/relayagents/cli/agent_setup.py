@@ -7,7 +7,9 @@ that the printed form and the applied form cannot drift and tests can check eith
   the MCP server at local scope. Both are private to this user and this folder.
 - Codex, OpenCode, and Cursor: write the project's own MCP config with the token read from an
   environment variable, so the file holds no secret, and install the skill once at
-  ``~/.agents/skills``. The skill does nothing where the Relay tools are not connected.
+  ``~/.agents/skills``. The skill does nothing where the Relay tools are not connected. With
+  ``--env-file``, the token goes straight into that file (refused if git would track it), so an
+  agent running setup for its human never has the token in its output.
 - Hermes and generic: unchanged; Hermes runs in the team's container, where Relay is always on.
 """
 
@@ -17,6 +19,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -76,11 +79,20 @@ class InstallSkill:
 
 
 @dataclass(frozen=True)
+class SetEnv:
+    """Set ``export name=value`` in a shell file, replacing an earlier line for the same name."""
+
+    path: Path
+    name: str
+    value: str  # a token: never described, never printed
+
+
+@dataclass(frozen=True)
 class Note:
     text: str
 
 
-Step = Run | WriteFile | AppendFile | InstallSkill | Note
+Step = Run | WriteFile | AppendFile | InstallSkill | SetEnv | Note
 
 
 @dataclass
@@ -146,9 +158,14 @@ def plan(
     *,
     marketplace: str = MARKETPLACE_SOURCE,
     home: Path | None = None,
+    env_file: Path | None = None,
 ) -> Plan:
     if agent not in AGENTS:
         raise SetupError(f"unknown agent {agent!r}; choose from {', '.join(AGENTS)}")
+    if env_file is not None:
+        if agent not in TOKEN_ENV:
+            raise SetupError(f"--env-file applies only to {', '.join(TOKEN_ENV)}")
+        check_env_file(env_file)
     home = home or Path.home()
     if agent in PROJECT_AGENTS and project.resolve() in (
         home.resolve(),
@@ -164,11 +181,11 @@ def plan(
     if agent == "claude-code":
         p.steps = _plan_claude_code(url, token, project, marketplace)
     elif agent == "codex":
-        p.steps = _plan_codex(url, token, project, home)
+        p.steps = _plan_codex(url, token, project, home, env_file)
     elif agent == "opencode":
-        p.steps = _plan_opencode(url, token, project, home)
+        p.steps = _plan_opencode(url, token, project, home, env_file)
     elif agent == "cursor":
-        p.steps = _plan_cursor(url, token, project, home)
+        p.steps = _plan_cursor(url, token, project, home, env_file)
     elif agent == "hermes":
         p.steps = [
             AppendFile(
@@ -220,7 +237,9 @@ def _plan_claude_code(url: str, token: str, project: Path, marketplace: str) -> 
     ]
 
 
-def _plan_codex(url: str, token: str, project: Path, home: Path) -> list[Step]:
+def _plan_codex(
+    url: str, token: str, project: Path, home: Path, env_file: Path | None
+) -> list[Step]:
     env = TOKEN_ENV["codex"]
     config = project / ".codex" / "config.toml"
     existing = config.read_text() if config.exists() else ""
@@ -236,11 +255,14 @@ def _plan_codex(url: str, token: str, project: Path, home: Path) -> list[Step]:
                 " project. Remove that table so only opted-in projects connect."
             )
         )
-    steps.append(_token_note(env, token, "Codex", project, trust=True))
+    set_env, note = _token_steps(env, token, "Codex", project, env_file, trust=True)
+    steps += [*set_env, Note(note)]
     return steps
 
 
-def _plan_opencode(url: str, token: str, project: Path, home: Path) -> list[Step]:
+def _plan_opencode(
+    url: str, token: str, project: Path, home: Path, env_file: Path | None
+) -> list[Step]:
     env = TOKEN_ENV["opencode"]
     config = project / "opencode.json"
     existing = config.read_text() if config.exists() else ""
@@ -256,11 +278,14 @@ def _plan_opencode(url: str, token: str, project: Path, home: Path) -> list[Step
                 " project. Remove it there so only opted-in projects connect."
             )
         )
-    steps.append(_token_note(env, token, "OpenCode", project, trust=False))
+    set_env, note = _token_steps(env, token, "OpenCode", project, env_file, trust=False)
+    steps += [*set_env, Note(note)]
     return steps
 
 
-def _plan_cursor(url: str, token: str, project: Path, home: Path) -> list[Step]:
+def _plan_cursor(
+    url: str, token: str, project: Path, home: Path, env_file: Path | None
+) -> list[Step]:
     env = TOKEN_ENV["cursor"]
     config = project / ".cursor" / "mcp.json"
     existing = config.read_text() if config.exists() else ""
@@ -277,27 +302,91 @@ def _plan_cursor(url: str, token: str, project: Path, home: Path) -> list[Step]:
                 " project. Remove it there so only opted-in projects connect."
             )
         )
-    note = _token_note(env, token, "Cursor", project, trust=False)
-    steps.append(
+    set_env, note = _token_steps(env, token, "Cursor", project, env_file, trust=False)
+    steps += [
+        *set_env,
         Note(
-            note.text + "\nCursor reads it from its own environment: if you open Cursor from the"
+            note + "\nCursor reads it from its own environment: if you open Cursor from the"
             "\nDock, set it where apps see it too, or launch Cursor from that shell."
-        )
-    )
+        ),
+    ]
     return steps
 
 
-def _token_note(env: str, token: str, harness: str, project: Path, *, trust: bool) -> Note:
-    lines = [
-        f"{harness} reads the agent token from ${env}. Set it where {harness} starts, for example in",
-        "your shell profile or a gitignored .envrc in this project (direnv):",
-        f"  export {env}={token}",
+def _token_steps(
+    env: str, token: str, harness: str, project: Path, env_file: Path | None, *, trust: bool
+) -> tuple[list[SetEnv], str]:
+    """Where the agent token goes: into ``env_file`` (never printed), or a line to copy."""
+    if env_file is not None:
+        steps = [SetEnv(env_file, env, token)]
+        lines = [
+            f"{harness} reads the agent token from ${env}, now set in {env_file}.",
+            f"Start {harness} from a shell that has loaded it (a new terminal).",
+        ]
+        real = env_file.expanduser().resolve()
+        if real.is_file() and real.stat().st_mode & 0o044:
+            lines.append(
+                f"{env_file} is readable by other users of this machine; `chmod 600 {env_file}`"
+                " keeps the token private."
+            )
+    else:
+        steps = []
+        lines = [
+            f"{harness} reads the agent token from ${env}. Set it where {harness} starts, for"
+            " example in",
+            "your shell profile or a gitignored .envrc in this project (direnv), or rerun with"
+            " --env-file:",
+            f"  export {env}={token}",
+        ]
+    lines += [
         f"The config file holds no secret, so committing it opts {project.name} in for teammates too;",
         "each of them runs `relay setup-agent` with their own token.",
     ]
     if trust:
         lines.append("Codex loads a project's .codex/config.toml only when you trust the project.")
-    return Note("\n".join(lines))
+    return steps, "\n".join(lines)
+
+
+def check_env_file(path: Path) -> None:
+    """Refuse a file git would track: a token must never reach a commit (the project, dotfiles).
+
+    Follows symlinks (a stow-managed ~/.zshrc lives in a repo) and fails closed when git cannot
+    answer. A bare-repo dotfiles setup (``--git-dir=~/.dotfiles``) is invisible to this check.
+    """
+    real = path.expanduser().resolve()
+    if real.is_dir():
+        raise SetupError(f"{path} is a folder; --env-file takes a file such as .envrc or ~/.zshrc")
+    git = shutil.which("git")
+    if git is None:
+        return  # no git on this machine, so nothing here can commit the file
+    anchor = real.parent
+    while not anchor.is_dir():  # the file may go into a folder that does not exist yet
+        anchor = anchor.parent
+    inside = subprocess.run(
+        [git, "-C", str(anchor), "rev-parse", "--is-inside-work-tree"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if inside.returncode != 0:
+        if "not a git repository" in inside.stderr:
+            return
+        raise SetupError(
+            f"git could not tell whether {real} would be committed"
+            f" ({inside.stderr.strip() or 'no output'}); choose a file outside any repository"
+        )
+    if inside.stdout.strip() != "true":
+        return  # inside a .git folder or a bare repository: not a work tree
+    ignored = subprocess.run(
+        [git, "-C", str(anchor), "check-ignore", "-q", str(real)],
+        capture_output=True,
+        check=False,
+    )
+    if ignored.returncode != 0:
+        raise SetupError(
+            f"{real} is in a git work tree and not ignored, so the token could be committed;"
+            " add it to .gitignore or .git/info/exclude first, or choose another file"
+        )
 
 
 # ---- config merges ------------------------------------------------------------------------------
@@ -407,6 +496,8 @@ def describe(step: Step, *, reveal: bool) -> str:
         return f"# append to {step.path}\n{step.content}"
     if isinstance(step, InstallSkill):
         return f"# install the relay skill into {step.dest}"
+    if isinstance(step, SetEnv):
+        return f"# set {step.name} in {step.path} (the token is not shown)"
     return step.text
 
 
@@ -440,6 +531,43 @@ def apply(step: Step, *, runner: Runner | None = None) -> None:
             f.write("\n" + step.content)
     elif isinstance(step, InstallSkill):
         install_skill(step.dest)
+    elif isinstance(step, SetEnv):
+        set_env_line(step.path, step.name, step.value)
+
+
+def set_env_line(path: Path, name: str, value: str) -> None:
+    """Replace (or add) ``export name=value`` in a shell file without disturbing the rest of it.
+
+    Only a top-level line that is nothing but the assignment is replaced; an indented or compound
+    line is left alone, and the new line, appended last, wins. The write is atomic, keeps the file's
+    mode and line endings, and goes to the symlink's target so the link survives.
+    """
+    real = path.expanduser().resolve()
+    try:
+        with open(real, encoding="utf-8", newline="") as f:
+            old = f.read()
+        mode = real.stat().st_mode & 0o777
+    except FileNotFoundError:
+        old, mode = "", 0o600
+    except UnicodeDecodeError as exc:
+        raise SetupError(f"{path} is not UTF-8 text; choose another file") from exc
+    eol = "\r\n" if "\r\n" in old else "\n"
+    lone = re.compile(rf"^(export[ \t]+)?{re.escape(name)}=[^;&|`$\\\s]*[ \t]*\r?\n?$")
+    body = "".join(line for line in old.splitlines(keepends=True) if not lone.match(line))
+    if body and not body.endswith("\n"):
+        body += eol
+    real.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=f".{real.name}.", dir=real.parent)
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            f.write(f"{body}export {name}={shlex.quote(value)}{eol}")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, real)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def check_skill_dest(dest: Path) -> Path:

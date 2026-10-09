@@ -15,6 +15,10 @@ CONFIG_DIR = Path(os.environ.get("RELAY_CONFIG_DIR", Path.home() / ".config" / "
 CREDENTIALS = CONFIG_DIR / "credentials.json"
 
 
+class NotLoggedInError(RuntimeError):
+    """No Relay URL or token in the environment or the credentials file."""
+
+
 @dataclass
 class Credentials:
     url: str
@@ -32,7 +36,9 @@ class Credentials:
             token = token or data.get("token")
             user_id = user_id or data.get("user_id", "")
         if not url or not token:
-            raise RuntimeError("not logged in: run `relay login` or set RELAY_URL and RELAY_TOKEN")
+            raise NotLoggedInError(
+                "not logged in: run `relay login` or set RELAY_URL and RELAY_TOKEN"
+            )
         return cls(url=url.rstrip("/"), token=token, user_id=user_id)
 
     def save(self) -> None:

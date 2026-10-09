@@ -14,7 +14,7 @@ import typer
 
 from relayagents import __version__
 from relayagents.cli import agent_setup
-from relayagents.cli.client import CONFIG_DIR, Credentials, RelayClient
+from relayagents.cli.client import CONFIG_DIR, Credentials, NotLoggedInError, RelayClient
 from relayagents.tools.cli import register_tool_commands
 
 app = typer.Typer(
@@ -30,7 +30,11 @@ app.add_typer(standup_app, name="standup")
 
 
 def _client() -> RelayClient:
-    return RelayClient()
+    try:
+        return RelayClient()
+    except NotLoggedInError as exc:  # an expected state, not a crash: no traceback
+        typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
 
 
 def _echo_json(data: Any) -> None:
@@ -150,7 +154,7 @@ def setup_agent(
     agent_token: Annotated[
         bool,
         typer.Option(
-            help="Mint a dedicated agent token (actor <you>.<agent>) instead of reusing your human token."
+            help="Mint a dedicated agent token (actor `<you>.<agent>`) instead of reusing your human token."
         ),
     ] = True,
     project: Annotated[
@@ -159,6 +163,14 @@ def setup_agent(
             help="A folder in the project to connect; its git work tree is used (default: here).",
             exists=True,
             file_okay=False,
+        ),
+    ] = None,
+    env_file: Annotated[
+        Path | None,
+        typer.Option(
+            help="Codex, OpenCode, Cursor: write the token's export line into this file (a"
+            " gitignored .envrc, or your shell profile) instead of printing it.",
+            dir_okay=False,
         ),
     ] = None,
     marketplace: Annotated[
@@ -183,14 +195,23 @@ def setup_agent(
     minted: dict[str, Any] | None = None
     try:
         # Plan with a placeholder first, so a config we cannot merge fails before a token exists.
-        agent_setup.plan(agent, c.creds.url, TOKEN_PLACEHOLDER, root, marketplace=marketplace)
+        agent_setup.plan(
+            agent,
+            c.creds.url,
+            TOKEN_PLACEHOLDER,
+            root,
+            marketplace=marketplace,
+            env_file=env_file,
+        )
         token = c.creds.token
         if mint and write:
             minted = c.post("/v1/tokens", {"label": label, "actor_kind": "agent", "harness": agent})
             token = minted["token"]
         elif mint:
             token = TOKEN_PLACEHOLDER  # a preview changes nothing, on the server included
-        steps = agent_setup.plan(agent, c.creds.url, token, root, marketplace=marketplace).steps
+        steps = agent_setup.plan(
+            agent, c.creds.url, token, root, marketplace=marketplace, env_file=env_file
+        ).steps
         for step in steps:
             typer.echo(agent_setup.describe(step, reveal=not write))
             if write:

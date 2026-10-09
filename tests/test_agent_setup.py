@@ -404,3 +404,140 @@ def test_hermes_config_carries_the_minted_token(tmp_path: Path) -> None:
     assert f"Authorization: Bearer {TOKEN}" in step.content
     s.apply(step)
     assert f"Authorization: Bearer {TOKEN}" in step.path.read_text()
+
+
+def test_not_logged_in_is_a_one_line_error(tmp_path, monkeypatch) -> None:
+    # The connect guide (docs/connect-your-agent.md) has agents run `relay whoami` to check this.
+    from relayagents.cli import client
+
+    monkeypatch.delenv("RELAY_URL", raising=False)
+    monkeypatch.delenv("RELAY_TOKEN", raising=False)
+    monkeypatch.setattr(client, "CREDENTIALS", tmp_path / "missing.json")
+    result = CliRunner().invoke(main.app, ["whoami"])
+    assert result.exit_code == 1
+    assert "not logged in: run `relay login`" in result.output
+    assert isinstance(result.exception, SystemExit)  # not an uncaught error with a traceback
+
+
+# ---- --env-file: the token goes into a file, never into the output -----------------------------
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+
+def test_set_env_line_replaces_only_its_own_line(tmp_path: Path) -> None:
+    rc = tmp_path / ".zshrc"
+    rc.write_text(
+        "alias ll='ls -l'\n"
+        "export RELAY_CODEX_TOKEN=rly_old\n"
+        "RELAY_CODEX_TOKEN='rly_older'\n"
+        "if true; then\n  export RELAY_CODEX_TOKEN=x\nfi\n"  # inside a block: removing breaks it
+        "export RELAY_CODEX_TOKEN=y; export X=1\n"  # compound: keep the rest of the line
+        "export PATH=$PATH:/opt"
+    )
+    rc.chmod(0o640)
+    s.set_env_line(rc, "RELAY_CODEX_TOKEN", TOKEN)
+    assert rc.read_text() == (
+        "alias ll='ls -l'\n"
+        "if true; then\n  export RELAY_CODEX_TOKEN=x\nfi\n"
+        "export RELAY_CODEX_TOKEN=y; export X=1\n"
+        f"export PATH=$PATH:/opt\nexport RELAY_CODEX_TOKEN={TOKEN}\n"
+    )
+    assert rc.stat().st_mode & 0o777 == 0o640
+    assert [f.name for f in tmp_path.iterdir()] == [".zshrc"]  # no temp file left behind
+
+
+def test_set_env_line_keeps_crlf_and_refuses_binary(tmp_path: Path) -> None:
+    rc = tmp_path / "profile"
+    rc.write_bytes(b"export A=1\r\nexport RELAY_CODEX_TOKEN=old\r\n")
+    s.set_env_line(rc, "RELAY_CODEX_TOKEN", TOKEN)
+    assert rc.read_bytes() == f"export A=1\r\nexport RELAY_CODEX_TOKEN={TOKEN}\r\n".encode()
+    rc.write_bytes(b"\xff\xfe not utf-8")
+    with pytest.raises(s.SetupError, match="not UTF-8"):
+        s.set_env_line(rc, "RELAY_CODEX_TOKEN", TOKEN)
+
+
+def test_set_env_line_creates_a_private_file_and_keeps_symlinks(tmp_path: Path) -> None:
+    new = tmp_path / "proj" / ".envrc"
+    s.set_env_line(new, "RELAY_OPENCODE_TOKEN", TOKEN)
+    assert new.stat().st_mode & 0o777 == 0o600
+    dotfiles = tmp_path / "dotfiles" / "zshrc"
+    dotfiles.parent.mkdir()
+    dotfiles.write_text("# mine\n")
+    link = tmp_path / ".zshrc"
+    link.symlink_to(dotfiles)
+    s.set_env_line(link, "RELAY_CODEX_TOKEN", TOKEN)
+    assert link.is_symlink() and TOKEN in dotfiles.read_text()
+
+
+def test_env_file_git_would_track_is_refused(tmp_path: Path) -> None:
+    _git(tmp_path, "init", "-q")
+    with pytest.raises(s.SetupError, match="not ignored"):
+        s.check_env_file(tmp_path / ".envrc")
+    (tmp_path / ".git" / "info" / "exclude").write_text(".envrc\n")
+    s.check_env_file(tmp_path / ".envrc")  # ignored: fine
+    with pytest.raises(s.SetupError, match="not ignored"):
+        s.check_env_file(tmp_path / "config" / "new" / "token.sh")  # folders that do not exist yet
+    outside = tmp_path.parent / f"{tmp_path.name}-home" / ".zshrc"
+    outside.parent.mkdir()
+    s.check_env_file(outside)  # not in any work tree: fine
+
+
+def test_env_file_check_fails_closed_when_git_cannot_answer(tmp_path, monkeypatch) -> None:
+    def git_refuses(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 128, "", "fatal: detected dubious ownership")
+
+    monkeypatch.setattr(s.subprocess, "run", git_refuses)
+    with pytest.raises(s.SetupError, match="dubious ownership"):
+        s.check_env_file(tmp_path / ".envrc")
+
+
+def test_env_file_world_readable_gets_a_warning(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".zshrc").write_text("# mine\n")
+    (home / ".zshrc").chmod(0o644)
+    plan = s.plan("codex", URL, TOKEN, tmp_path / "proj", home=home, env_file=home / ".zshrc")
+    assert "chmod 600" in s.describe(plan.steps[-1], reveal=False)
+
+
+def test_env_file_symlinked_into_a_dotfiles_repo_is_refused(tmp_path: Path) -> None:
+    repo = tmp_path / "dotfiles"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    (repo / "zshrc").write_text("# tracked\n")
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".zshrc").symlink_to(repo / "zshrc")
+    with pytest.raises(s.SetupError, match="not ignored"):
+        s.plan("codex", URL, TOKEN, tmp_path / "proj", home=home, env_file=home / ".zshrc")
+
+
+def test_env_file_plan_never_shows_the_token(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    plan = s.plan("cursor", URL, TOKEN, tmp_path / "proj", home=home, env_file=home / ".zshrc")
+    (set_env,) = [st for st in plan.steps if isinstance(st, s.SetEnv)]
+    assert set_env == s.SetEnv(home / ".zshrc", "RELAY_CURSOR_TOKEN", TOKEN)
+    assert all(TOKEN not in s.describe(st, reveal=True) for st in plan.steps)
+
+
+def test_env_file_is_only_for_env_token_agents(tmp_path: Path) -> None:
+    with pytest.raises(s.SetupError, match="--env-file applies only to"):
+        s.plan("claude-code", URL, TOKEN, tmp_path, env_file=tmp_path / ".envrc")
+
+
+def test_setup_agent_env_file_keeps_the_token_out_of_the_output(tmp_path, monkeypatch) -> None:
+    fake = _FakeClient()
+    project = tmp_path / "proj"
+    project.mkdir()
+    _git(project, "init", "-q")
+    (project / ".git" / "info" / "exclude").write_text(".envrc\n")
+    monkeypatch.setattr(main, "_client", lambda: fake)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    envrc = project / ".envrc"
+    args = ["setup-agent", "codex", "--project", str(project), "--env-file", str(envrc)]
+    result = CliRunner().invoke(main.app, [*args, "--write"])
+    assert result.exit_code == 0, result.output
+    assert TOKEN not in result.output
+    assert envrc.read_text() == f"export RELAY_CODEX_TOKEN={TOKEN}\n"
