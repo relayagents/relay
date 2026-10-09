@@ -14,7 +14,7 @@ $EDITOR .env                      # hostname, Slack tokens, team model key (opti
 uv tool install git+https://github.com/relayagents/relay   # the `relay` CLI on your laptop (PyPI release pending)
 relay login --url https://relay.example.dev --token <printed above>
 scripts/add-user.sh grace         # on the node: user, tokens, AgentCard, and a Hermes container
-relay setup-agent claude-code     # points your coding agent at Relay's MCP server
+(cd ~/code/team-repo && relay setup-agent claude-code --write)   # your coding agent, in that project only
 relay meeting upload --transcript fixtures/transcript_sample.json --skip-asr --participants ada,grace,linus
 relay my-items                    # ...and `relay recall "embedding cache"`, `relay decisions`
 ```
@@ -61,6 +61,28 @@ flowchart LR
   H1 -->|gh, user token| GH
   H1 -->|MCP| WS
 ```
+
+## Connecting a coding agent
+
+Relay is on per project, never everywhere: your personal projects stay out of the team's log.
+From the root of a project that should use Relay, after `relay login`:
+
+```bash
+relay setup-agent claude-code --write   # or: codex, opencode
+```
+
+- **Claude Code** gets the Relay plugin (it carries the `relay` skill) and the MCP server, both at
+  local scope: private to you and to this folder. The plugin comes from this repository's
+  marketplace (`relay@relayagents`).
+- **Codex** and **OpenCode** get a project config (`.codex/config.toml`, `opencode.json`) that reads
+  the token from `RELAY_CODEX_TOKEN` / `RELAY_OPENCODE_TOKEN`, so the file holds no secret, and the
+  skill in `~/.agents/skills/relay`. The skill does nothing in projects where Relay is not
+  connected.
+- Without `--write` it prints the steps and changes nothing. Run it again to replace this
+  project's token; the one it replaces is revoked.
+
+The skill tells the agent when to report, when to ask for approval, and never to fall back to your
+own `relay` login. Why it works this way: [ADR-0010](docs/adr/0010-coding-agents-opt-in-per-project.md).
 
 ## The tool surface
 
