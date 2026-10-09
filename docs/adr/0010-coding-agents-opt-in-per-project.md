@@ -48,7 +48,8 @@ nothing regressed.
    - Codex, OpenCode, and Cursor: write the project's MCP config with the token read from
      `RELAY_CODEX_TOKEN` / `RELAY_OPENCODE_TOKEN` / `RELAY_CURSOR_TOKEN` (not `RELAY_TOKEN`, which
      the `relay` CLI prefers over its login), and install the skill at `~/.agents/skills/relay`,
-     which all three read.
+     which all three read. `--env-file` writes the token's `export` line into a file git does not
+     track (a gitignored `.envrc`, a shell profile) instead of printing it.
    - Hermes is unchanged: it runs in the team's container, where Relay is always on.
 
    Each run mints one agent token labelled for this agent, project, and machine, and revokes the
@@ -57,14 +58,18 @@ nothing regressed.
    Codex's project config would be its user-wide one.
 3. **The skill gates itself on the tools.** It acts only when MCP tools from a server named
    `relay` are present, and never substitutes the `relay` shell command, which is logged in as
-   the human and works in every folder.
+   the human and works in every folder. The one exception is setup: when the human asks the agent
+   to connect a project, the agent runs `relay setup-agent` itself, following
+   `docs/connect-your-agent.md`, a guide written for the agent. The human's request is the opt-in,
+   as in point 4, and what is left for the human is approving the login in Slack, trusting the
+   project in Codex, and starting a new session.
 4. **Approvals follow where the request came from.** A human asking for an action in their own
    session has approved it. `request_approval` is for writes that came from Relay (an item, a
    teammate's `ask`) or happen while the human is away. The MCP instructions and the agent
    contract say the same.
-5. **Labs document, they do not bundle.** `lab-core` points members at `setup-agent`; it does not
-   declare Relay as a plugin dependency, because a dependency installs and enables at the
-   dependent's scope, which would be every project.
+5. **Labs document, they do not bundle.** `lab-core` points members at the connect guide; it
+   does not declare Relay as a plugin dependency, because a dependency installs and enables at
+   the dependent's scope, which would be every project.
 
 ## Alternatives
 

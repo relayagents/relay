@@ -1,6 +1,6 @@
 ---
 name: relay
-description: Use when the session has MCP tools from a server named relay (recall, my_items, report, request_approval, ask), when the user asks what the team decided or what is assigned to them, when finishing a piece of work, or when the user asks to tell the team something. Also use when a project's config names a relay MCP server that is not connected in this session.
+description: Use when the session has MCP tools from a server named relay (recall, my_items, report, request_approval, ask), when the user asks what the team decided or what is assigned to them, when finishing a piece of work, or when the user asks to tell the team something. Also use when a project's config names a relay MCP server that is not connected in this session, or when the user asks to connect a project to Relay.
 ---
 
 # Relay
@@ -20,15 +20,24 @@ MCP tools from a server named `relay` (shown as `recall`, or with a prefix such 
   `.claude/settings.local.json` enables `relay@relayagents`, `.codex/config.toml` has
   `[mcp_servers.relay]`, `opencode.json` has `mcp.relay`, or `.cursor/mcp.json` has
   `mcpServers.relay`): Relay is meant to be on but is not connected. Do the user's task, then
-  tell them once: run `relay setup-agent <claude-code|codex|opencode|cursor> --write` in the
-  project root and start a new session. For Codex, OpenCode, or Cursor, also check that
-  `RELAY_CODEX_TOKEN`, `RELAY_OPENCODE_TOKEN`, or `RELAY_CURSOR_TOKEN` is set.
-- **Tools absent otherwise:** this project is not on Relay. Do not mention Relay.
+  tell them once and offer to reconnect it (below). For Codex, OpenCode, or Cursor, check first,
+  without printing it, that `RELAY_CODEX_TOKEN`, `RELAY_OPENCODE_TOKEN`, or `RELAY_CURSOR_TOKEN`
+  is set; often that is all that is missing.
+- **Tools absent otherwise:** this project is not on Relay. Do not mention Relay unless the user
+  asks to connect it (below).
 
 **Never use the `relay` shell command in place of the tools.** It is logged in as your human, not
 as you, and it works in every folder, so it would publish as them and bypass the per-project
-switch. If the tools are missing, the right result is "not sent" plus the setup line above, even
+switch. If the tools are missing, the right result is "not sent" plus the offer to connect, even
 when the user asked you to tell the team.
+
+## Connecting a project
+
+The one exception: when your human asks you to connect (or reconnect) this project, run
+`relay setup-agent <claude-code|codex|opencode|cursor> --write` from the project root, following
+https://github.com/relayagents/relay/blob/main/docs/connect-your-agent.md (logging in, storing
+the token, what to tell your human). Their request is the opt-in; never connect a project on your
+own initiative.
 
 ## Tools
 
