@@ -436,7 +436,7 @@ def test_set_env_line_replaces_only_its_own_line(tmp_path: Path) -> None:
         "export RELAY_CODEX_TOKEN=y; export X=1\n"  # compound: keep the rest of the line
         "export PATH=$PATH:/opt"
     )
-    rc.chmod(0o640)
+    rc.chmod(0o644)
     s.set_env_line(rc, "RELAY_CODEX_TOKEN", TOKEN)
     assert rc.read_text() == (
         "alias ll='ls -l'\n"
@@ -444,7 +444,7 @@ def test_set_env_line_replaces_only_its_own_line(tmp_path: Path) -> None:
         "export RELAY_CODEX_TOKEN=y; export X=1\n"
         f"export PATH=$PATH:/opt\nexport RELAY_CODEX_TOKEN={TOKEN}\n"
     )
-    assert rc.stat().st_mode & 0o777 == 0o640
+    assert rc.stat().st_mode & 0o777 == 0o600  # it holds a token now
     assert [f.name for f in tmp_path.iterdir()] == [".zshrc"]  # no temp file left behind
 
 
@@ -493,13 +493,36 @@ def test_env_file_check_fails_closed_when_git_cannot_answer(tmp_path, monkeypatc
         s.check_env_file(tmp_path / ".envrc")
 
 
-def test_env_file_world_readable_gets_a_warning(tmp_path: Path) -> None:
+def test_env_file_shared_with_others_is_announced_as_made_private(tmp_path: Path) -> None:
     home = tmp_path / "home"
     home.mkdir()
     (home / ".zshrc").write_text("# mine\n")
     (home / ".zshrc").chmod(0o644)
     plan = s.plan("codex", URL, TOKEN, tmp_path / "proj", home=home, env_file=home / ".zshrc")
-    assert "chmod 600" in s.describe(plan.steps[-1], reveal=False)
+    assert "now private to you" in s.describe(plan.steps[-1], reveal=False)
+
+
+def test_env_file_in_a_repo_is_refused_without_git(tmp_path, monkeypatch) -> None:
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(s.shutil, "which", lambda name: None)
+    with pytest.raises(s.SetupError, match="git is not on PATH"):
+        s.check_env_file(tmp_path / "sub" / ".envrc")
+    s.check_env_file(tmp_path.parent / f"{tmp_path.name}-elsewhere" / ".envrc")
+
+
+def test_env_file_check_ignores_inherited_git_env(tmp_path, monkeypatch) -> None:
+    # GIT_DIR pointing at some other repo must not make the project's .envrc look unversioned.
+    other = tmp_path / "other"
+    other.mkdir()
+    _git(other, "init", "-q")
+    (other / ".git" / "info" / "exclude").write_text(".envrc\n")  # ignored there, not here
+    project = tmp_path / "proj"
+    project.mkdir()
+    _git(project, "init", "-q")
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    monkeypatch.setenv("LANG", "de_DE.UTF-8")
+    with pytest.raises(s.SetupError, match="not ignored"):
+        s.check_env_file(project / ".envrc")
 
 
 def test_env_file_symlinked_into_a_dotfiles_repo_is_refused(tmp_path: Path) -> None:

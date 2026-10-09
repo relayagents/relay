@@ -324,11 +324,8 @@ def _token_steps(
             f"Start {harness} from a shell that has loaded it (a new terminal).",
         ]
         real = env_file.expanduser().resolve()
-        if real.is_file() and real.stat().st_mode & 0o044:
-            lines.append(
-                f"{env_file} is readable by other users of this machine; `chmod 600 {env_file}`"
-                " keeps the token private."
-            )
+        if real.is_file() and real.stat().st_mode & 0o077:
+            lines.append(f"{env_file} is now private to you (group and other access removed).")
     else:
         steps = []
         lines = [
@@ -350,26 +347,35 @@ def _token_steps(
 def check_env_file(path: Path) -> None:
     """Refuse a file git would track: a token must never reach a commit (the project, dotfiles).
 
-    Follows symlinks (a stow-managed ~/.zshrc lives in a repo) and fails closed when git cannot
-    answer. A bare-repo dotfiles setup (``--git-dir=~/.dotfiles``) is invisible to this check.
+    Follows symlinks (a stow-managed ~/.zshrc lives in a repo) and fails closed whenever git
+    cannot answer. A bare-repo dotfiles setup (``--git-dir=~/.dotfiles``) is invisible to it.
     """
     real = path.expanduser().resolve()
     if real.is_dir():
         raise SetupError(f"{path} is a folder; --env-file takes a file such as .envrc or ~/.zshrc")
-    git = shutil.which("git")
-    if git is None:
-        return  # no git on this machine, so nothing here can commit the file
     anchor = real.parent
     while not anchor.is_dir():  # the file may go into a folder that does not exist yet
         anchor = anchor.parent
-    inside = subprocess.run(
-        [git, "-C", str(anchor), "rev-parse", "--is-inside-work-tree"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    git = shutil.which("git")
+    if git is None:
+        # No git to ask, but a GUI client or a later install could still commit it.
+        if any((d / ".git").exists() for d in (anchor, *anchor.parents)):
+            raise SetupError(
+                f"{real} is inside a git repository and git is not on PATH to check it"
+            )
+        return
+    # Ask about this file's own repository, in a fixed language, across mount points.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env |= {"LC_ALL": "C", "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1"}
+
+    def ask(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [git, "-C", str(anchor), *args], capture_output=True, text=True, check=False, env=env
+        )
+
+    inside = ask("rev-parse", "--is-inside-work-tree")
     if inside.returncode != 0:
-        if "not a git repository" in inside.stderr:
+        if inside.stderr.startswith("fatal: not a git repository"):
             return
         raise SetupError(
             f"git could not tell whether {real} would be committed"
@@ -377,16 +383,14 @@ def check_env_file(path: Path) -> None:
         )
     if inside.stdout.strip() != "true":
         return  # inside a .git folder or a bare repository: not a work tree
-    ignored = subprocess.run(
-        [git, "-C", str(anchor), "check-ignore", "-q", str(real)],
-        capture_output=True,
-        check=False,
-    )
-    if ignored.returncode != 0:
+    ignored = ask("check-ignore", "-q", str(real))
+    if ignored.returncode == 1:
         raise SetupError(
             f"{real} is in a git work tree and not ignored, so the token could be committed;"
             " add it to .gitignore or .git/info/exclude first, or choose another file"
         )
+    if ignored.returncode != 0:
+        raise SetupError(f"git could not check {real} ({ignored.stderr.strip() or 'no output'})")
 
 
 # ---- config merges ------------------------------------------------------------------------------
@@ -532,6 +536,7 @@ def apply(step: Step, *, runner: Runner | None = None) -> None:
     elif isinstance(step, InstallSkill):
         install_skill(step.dest)
     elif isinstance(step, SetEnv):
+        check_env_file(step.path)  # again: a symlink or ignore rule may have changed since planning
         set_env_line(step.path, step.name, step.value)
 
 
@@ -540,13 +545,14 @@ def set_env_line(path: Path, name: str, value: str) -> None:
 
     Only a top-level line that is nothing but the assignment is replaced; an indented or compound
     line is left alone, and the new line, appended last, wins. The write is atomic, keeps the file's
-    mode and line endings, and goes to the symlink's target so the link survives.
+    line endings, drops group and other permissions (the file now holds a token), and goes to the
+    symlink's target so the link survives.
     """
     real = path.expanduser().resolve()
     try:
         with open(real, encoding="utf-8", newline="") as f:
             old = f.read()
-        mode = real.stat().st_mode & 0o777
+        mode = real.stat().st_mode & 0o700  # it now holds a token: private to its owner
     except FileNotFoundError:
         old, mode = "", 0o600
     except UnicodeDecodeError as exc:
