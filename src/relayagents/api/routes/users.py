@@ -14,6 +14,7 @@ from sqlalchemy import select
 from relayagents.api.a2a_broker import broker
 from relayagents.api.a2a_broker.types import default_agent_card
 from relayagents.api.auth import (
+    DEFAULT_SCOPES,
     admin_principal,
     current_principal,
     get_services,
@@ -158,9 +159,16 @@ class AddUserOut(BaseModel):
 
 
 async def create_user_with_tokens(
-    services: Services, body: AddUserIn, *, issued_by: Actor
+    services: Services,
+    body: AddUserIn,
+    *,
+    issued_by: Actor,
+    scopes: tuple[str, ...] = DEFAULT_SCOPES,
 ) -> AddUserOut:
-    """Shared by the admin REST route and `relay add-user` (which runs on the node)."""
+    """Shared by the admin REST route and `relay add-user` (which runs on the node).
+
+    The REST route passes the admin token's scopes so a narrowed token cannot mint broader ones.
+    """
     if body.id in RESERVED_USER_IDS or body.id.startswith("relay"):
         raise HTTPException(400, f"user id {body.id!r} is reserved for system actors")
     now = datetime.now(UTC)
@@ -218,6 +226,7 @@ async def create_user_with_tokens(
             settings=services.settings,
             issued_by=issued_by,
             issued_via=via,
+            scopes=scopes,
         )  # type: ignore[arg-type]
         agent_id = f"{user.id}.{body.harness}"
         agent_token, _ = await mint_token(
@@ -228,6 +237,7 @@ async def create_user_with_tokens(
             settings=services.settings,
             issued_by=issued_by,
             issued_via=via,
+            scopes=scopes,
         )  # type: ignore[arg-type]
         card = default_agent_card(
             agent_id, user.display_name, services.settings.public_url, body.harness
@@ -256,7 +266,7 @@ async def add_user(
     admin: Annotated[Principal, Depends(admin_principal)],
     services: Annotated[Services, Depends(get_services)],
 ) -> AddUserOut:
-    return await create_user_with_tokens(services, body, issued_by=admin.actor)
+    return await create_user_with_tokens(services, body, issued_by=admin.actor, scopes=admin.scopes)
 
 
 class TokenIn(BaseModel):
@@ -275,7 +285,11 @@ async def create_token(
     principal: Annotated[Principal, Depends(human_principal)],
     services: Annotated[Services, Depends(get_services)],
 ) -> dict[str, Any]:
-    """Only a human token can mint tokens (for itself or for one of its agents). Agents cannot escalate."""
+    """Only a human token can mint tokens (for itself or for one of its agents). Agents cannot escalate.
+
+    The new token gets the caller's scopes, never more. If this route ever accepts requested
+    scopes, intersect them with the caller's.
+    """
     actor = (
         Actor.human(principal.user_id)
         if body.actor_kind == "human"
@@ -290,6 +304,7 @@ async def create_token(
             settings=services.settings,
             issued_by=principal.actor,
             issued_via="api",
+            scopes=principal.scopes,
         )
         await session.commit()
     return {
@@ -437,8 +452,12 @@ async def approve_device(
     approved: bool,
     by_user: str | None = None,
     admin: Actor | None = None,
+    scopes: tuple[str, ...] = DEFAULT_SCOPES,
 ) -> DeviceCodeRow:
-    """Resolve a login request. Either the account owner (``by_user``) or an admin (``admin``) may approve; nobody else."""
+    """Resolve a login request. Either the account owner (``by_user``) or an admin (``admin``) may approve; nobody else.
+
+    An admin approving over REST passes their token's scopes so the login is no broader than it.
+    """
     async with services.db.session() as session:
         row = await session.get(DeviceCodeRow, device_code)
         if row is None:
@@ -458,6 +477,7 @@ async def approve_device(
                 settings=services.settings,
                 issued_by=admin or Actor.human(row.user_id),
                 issued_via="admin" if admin else "device_flow",
+                scopes=scopes,
             )
             row.status, row.token_id, row.token_plain = "approved", tok.id, plain
         else:
@@ -474,7 +494,9 @@ async def device_approve_admin(
 ) -> dict[str, str]:
     """Fallback when Slack is not configured: an admin approves from the node."""
     try:
-        row = await approve_device(services, device_code, approved=True, admin=admin.actor)
+        row = await approve_device(
+            services, device_code, approved=True, admin=admin.actor, scopes=admin.scopes
+        )
     except KeyError as exc:
         raise HTTPException(404, "unknown device code") from exc
     return {"status": row.status}

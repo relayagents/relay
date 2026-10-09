@@ -15,7 +15,9 @@ Relay's rule: **agents act under their human's own tokens, external writes need 
 
 Tokens are opaque (`rly_...`), stored as SHA-256 with an optional pepper, expire after `RELAY_TOKEN_TTL_DAYS`, and can be revoked (`DELETE /v1/tokens/{id}`). Every event records the actor the token was bound to, so an agent can never be mistaken for its human in the log.
 
-Each token carries scopes, and every surface checks them: `tools` for MCP and `/v1/tools/*`, `events:read` for `GET /v1/events` and `/v1/events/{id}`, `events:write` for `POST /v1/events`, and `a2a` for the `/a2a` broker (agent cards stay public). A token missing the scope gets a 403. Tokens are minted with all four today; meetings, standups, approvals, and identity routes need no scope.
+Each token carries scopes, and every surface checks them: `tools` for MCP and `/v1/tools/*`, `events:read` for `GET /v1/events` and `/v1/events/{id}`, `events:write` for `POST /v1/events`, and `a2a` for the `/a2a` broker (agent cards stay public). A token missing the scope gets a 403. Meetings, standups, approvals, and identity routes need no scope by design, because the four scopes don't cover them. They need a valid token, plus a human token where the rules below say so. Giving them their own scopes is a separate design decision.
+
+A token never mints a broader token than itself. Tokens minted with a token (`POST /v1/tokens`, admin `POST /v1/users`, and an admin approving a device login over REST) get that token's scopes. Tokens minted without one (`relay add-user` and `relay admin approve-login` on the node, or the account owner approving a login in Slack) get all four scopes. Nothing requests narrower scopes yet; when `POST /v1/tokens` accepts them, they must be intersected with the caller's.
 
 Rules that keep an agent from escalating to its human:
 
