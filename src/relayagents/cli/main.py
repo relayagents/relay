@@ -143,7 +143,9 @@ def me(
 
 @app.command("setup-agent")
 def setup_agent(
-    agent: Annotated[str, typer.Argument(help="claude-code | codex | opencode | hermes | generic")],
+    agent: Annotated[
+        str, typer.Argument(help="claude-code | codex | opencode | cursor | hermes | generic")
+    ],
     write: Annotated[bool, typer.Option(help="Apply the steps instead of printing them.")] = False,
     agent_token: Annotated[
         bool,
@@ -163,7 +165,7 @@ def setup_agent(
         str, typer.Option(help="Where Claude Code fetches the Relay plugin from.", hidden=True)
     ] = agent_setup.MARKETPLACE_SOURCE,
 ) -> None:
-    """Connect a coding agent to Relay in this project only (claude-code, codex, opencode).
+    """Connect a coding agent to Relay in this project only (claude-code, codex, opencode, cursor).
 
     Relay stays off in your other projects. Run it from each project that should use Relay.
     """
@@ -316,7 +318,7 @@ def add_user(
         typer.echo(out.human_token)
         typer.echo(
             "\n== then, in each project that should use Relay, they run =="
-            "\n  relay setup-agent <claude-code|codex|opencode> --write"
+            "\n  relay setup-agent <claude-code|codex|opencode|cursor> --write"
         )
 
     asyncio.run(run())

@@ -26,12 +26,12 @@ When you finish a task or a piece of work, call `report` with `item_id` (and `cl
 
 ## Coding agents on a laptop: one project at a time
 
-A laptop coding agent (Claude Code, Codex, OpenCode) works in many folders, and most of them are
+A laptop coding agent (Claude Code, Codex, OpenCode, Cursor) works in many folders, and most of them are
 not team work. Relay is therefore opt-in per project ([ADR-0010](adr/0010-coding-agents-opt-in-per-project.md)):
 `relay setup-agent <agent> --write`, run inside a project, connects that agent in that project only.
 The behavior above ships as a skill, `relay`, with one source at
 [`src/relayagents/agent_plugin/skills/relay/SKILL.md`](../src/relayagents/agent_plugin/skills/relay/SKILL.md):
-the Claude Code plugin carries it, and `setup-agent` installs it for Codex and OpenCode. The skill
+the Claude Code plugin carries it, and `setup-agent` installs it for Codex, OpenCode, and Cursor. The skill
 acts only when the Relay MCP tools are present in the session, so it stays quiet everywhere else.
 
 ## Optional: daily updates

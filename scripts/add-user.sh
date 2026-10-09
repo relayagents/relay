@@ -40,4 +40,4 @@ echo "$human_token"
 echo
 echo "== then on their laptop =="
 echo "relay login --url ${relay_url} --token <the token above>"
-echo "cd <a project that should use Relay> && relay setup-agent claude-code --write   # or codex / opencode"
+echo "cd <a project that should use Relay> && relay setup-agent claude-code --write   # or codex / opencode / cursor"

@@ -5,9 +5,9 @@ that the printed form and the applied form cannot drift and tests can check eith
 
 - Claude Code: install and enable the Relay plugin (it carries the skill) at local scope, and add
   the MCP server at local scope. Both are private to this user and this folder.
-- Codex and OpenCode: write the project's own MCP config with the token read from an environment
-  variable, so the file holds no secret, and install the skill once at ``~/.agents/skills``. The
-  skill does nothing where the Relay tools are not connected.
+- Codex, OpenCode, and Cursor: write the project's own MCP config with the token read from an
+  environment variable, so the file holds no secret, and install the skill once at
+  ``~/.agents/skills``. The skill does nothing where the Relay tools are not connected.
 - Hermes and generic: unchanged; Hermes runs in the team's container, where Relay is always on.
 """
 
@@ -27,14 +27,21 @@ from dataclasses import dataclass, field
 from importlib import resources
 from importlib.resources.abc import Traversable
 from pathlib import Path
+from typing import Any
 
-AGENTS = ("claude-code", "codex", "opencode", "hermes", "generic")
+AGENTS = ("claude-code", "codex", "opencode", "cursor", "hermes", "generic")
+# Laptop coding agents: connected per project, never from the home folder (ADR-0010).
+PROJECT_AGENTS = ("claude-code", "codex", "opencode", "cursor")
 MARKETPLACE_SOURCE = "relayagents/relay"
 MARKETPLACE_SPARSE = (".claude-plugin", "src/relayagents/agent_plugin")
 PLUGIN_ID = "relay@relayagents"
 # Not RELAY_TOKEN: the `relay` CLI prefers RELAY_TOKEN over its stored login, so exporting an agent
 # token under that name would make the human's own CLI act as the agent.
-TOKEN_ENV = {"codex": "RELAY_CODEX_TOKEN", "opencode": "RELAY_OPENCODE_TOKEN"}
+TOKEN_ENV = {
+    "codex": "RELAY_CODEX_TOKEN",
+    "opencode": "RELAY_OPENCODE_TOKEN",
+    "cursor": "RELAY_CURSOR_TOKEN",
+}
 SKILL_NAME = "relay"
 
 
@@ -143,12 +150,12 @@ def plan(
     if agent not in AGENTS:
         raise SetupError(f"unknown agent {agent!r}; choose from {', '.join(AGENTS)}")
     home = home or Path.home()
-    if agent in ("claude-code", "codex", "opencode") and project.resolve() in (
+    if agent in PROJECT_AGENTS and project.resolve() in (
         home.resolve(),
         Path(project.resolve().anchor),
     ):
-        # Codex's ~/.codex/config.toml is its user-wide config: writing there would turn Relay on
-        # in every project, which is exactly what per-project setup exists to prevent.
+        # From ~, Codex's .codex/config.toml and Cursor's .cursor/mcp.json are their user-wide
+        # configs: writing there would turn Relay on in every project.
         raise SetupError(
             f"{project} is your home folder or the filesystem root, not a project;"
             " run setup-agent from the project that should use Relay"
@@ -160,6 +167,8 @@ def plan(
         p.steps = _plan_codex(url, token, project, home)
     elif agent == "opencode":
         p.steps = _plan_opencode(url, token, project, home)
+    elif agent == "cursor":
+        p.steps = _plan_cursor(url, token, project, home)
     elif agent == "hermes":
         p.steps = [
             AppendFile(
@@ -251,6 +260,33 @@ def _plan_opencode(url: str, token: str, project: Path, home: Path) -> list[Step
     return steps
 
 
+def _plan_cursor(url: str, token: str, project: Path, home: Path) -> list[Step]:
+    env = TOKEN_ENV["cursor"]
+    config = project / ".cursor" / "mcp.json"
+    existing = config.read_text() if config.exists() else ""
+    steps: list[Step] = [
+        WriteFile(config, merge_cursor_config(existing, url, env)),
+        # Cursor also reads ~/.agents/skills, so one install serves Codex, OpenCode, and Cursor.
+        InstallSkill(check_skill_dest(home / ".agents" / "skills" / SKILL_NAME)),
+    ]
+    global_config = home / ".cursor" / "mcp.json"
+    if global_config.exists() and '"relay"' in global_config.read_text():
+        steps.append(
+            Note(
+                f"{global_config} may also define a relay MCP server, which connects Relay in every"
+                " project. Remove it there so only opted-in projects connect."
+            )
+        )
+    note = _token_note(env, token, "Cursor", project, trust=False)
+    steps.append(
+        Note(
+            note.text + "\nCursor reads it from its own environment: if you open Cursor from the"
+            "\nDock, set it where apps see it too, or launch Cursor from that shell."
+        )
+    )
+    return steps
+
+
 def _token_note(env: str, token: str, harness: str, project: Path, *, trust: bool) -> Note:
     lines = [
         f"{harness} reads the agent token from ${env}. Set it where {harness} starts, for example in",
@@ -309,27 +345,48 @@ def merge_codex_config(existing: str, url: str, env: str) -> str:
     return merged
 
 
+def _load_json_object(existing: str, name: str) -> dict[str, Any] | None:
+    """Parse a JSON config we are about to merge into; ``None`` when the file is new or empty."""
+    if not existing.strip():
+        return None
+    try:
+        data = json.loads(existing)
+    except json.JSONDecodeError as exc:
+        raise SetupError(
+            f"{name} is not plain JSON (comments?); add the relay server by hand"
+        ) from exc
+    if not isinstance(data, dict):
+        raise SetupError(f"{name} is not a JSON object")
+    return data
+
+
+def _json_table(data: dict[str, Any], key: str, name: str) -> dict[str, Any]:
+    table = data.setdefault(key, {})
+    if not isinstance(table, dict):
+        raise SetupError(f'{name} has a "{key}" key that is not an object')
+    return table
+
+
 def merge_opencode_config(existing: str, url: str, env: str) -> str:
     """Set ``mcp.relay`` in an OpenCode config; the token comes from ``{env:...}``, never the file."""
-    if existing.strip():
-        try:
-            data = json.loads(existing)
-        except json.JSONDecodeError as exc:
-            raise SetupError(
-                "opencode.json is not plain JSON (comments?); add the relay server by hand"
-            ) from exc
-        if not isinstance(data, dict):
-            raise SetupError("opencode.json is not a JSON object")
-    else:
+    data = _load_json_object(existing, "opencode.json")
+    if data is None:
         data = {"$schema": "https://opencode.ai/config.json"}
-    mcp = data.setdefault("mcp", {})
-    if not isinstance(mcp, dict):
-        raise SetupError('opencode.json has an "mcp" key that is not an object')
-    mcp["relay"] = {
+    _json_table(data, "mcp", "opencode.json")["relay"] = {
         "type": "remote",
         "url": f"{url}/mcp",
         "enabled": True,
         "headers": {"Authorization": f"Bearer {{env:{env}}}"},
+    }
+    return json.dumps(data, indent=2) + "\n"
+
+
+def merge_cursor_config(existing: str, url: str, env: str) -> str:
+    """Set ``mcpServers.relay`` in ``.cursor/mcp.json``; the token comes from ``${env:...}``."""
+    data = _load_json_object(existing, ".cursor/mcp.json") or {}
+    _json_table(data, "mcpServers", ".cursor/mcp.json")["relay"] = {
+        "url": f"{url}/mcp",
+        "headers": {"Authorization": f"Bearer ${{env:{env}}}"},
     }
     return json.dumps(data, indent=2) + "\n"
 

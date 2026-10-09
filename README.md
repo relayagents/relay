@@ -68,16 +68,16 @@ Relay is on per project, never everywhere: your personal projects stay out of th
 From the root of a project that should use Relay, after `relay login`:
 
 ```bash
-relay setup-agent claude-code --write   # or: codex, opencode
+relay setup-agent claude-code --write   # or: codex, opencode, cursor
 ```
 
 - **Claude Code** gets the Relay plugin (it carries the `relay` skill) and the MCP server, both at
   local scope: private to you and to this folder. The plugin comes from this repository's
   marketplace (`relay@relayagents`).
-- **Codex** and **OpenCode** get a project config (`.codex/config.toml`, `opencode.json`) that reads
-  the token from `RELAY_CODEX_TOKEN` / `RELAY_OPENCODE_TOKEN`, so the file holds no secret, and the
-  skill in `~/.agents/skills/relay`. The skill does nothing in projects where Relay is not
-  connected.
+- **Codex**, **OpenCode**, and **Cursor** get a project config (`.codex/config.toml`,
+  `opencode.json`, `.cursor/mcp.json`) that reads the token from `RELAY_CODEX_TOKEN` /
+  `RELAY_OPENCODE_TOKEN` / `RELAY_CURSOR_TOKEN`, so the file holds no secret, and the skill in
+  `~/.agents/skills/relay`. The skill does nothing in projects where Relay is not connected.
 - Without `--write` it prints the steps and changes nothing. Run it again to replace this
   project's token; the one it replaces is revoked.
 
