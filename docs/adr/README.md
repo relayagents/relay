@@ -11,6 +11,7 @@
 | [0007](0007-single-slack-app-socket-mode.md) | One Slack app via Socket Mode |
 | [0008](0008-draft-by-default-standups.md) | Draft-by-default standups |
 | [0009](0009-relay-under-vendor-agents.md) | Relay sits under the vendor agents (Slackbot, Claude Tag, Codex), not beside them |
+| [0010](0010-coding-agents-opt-in-per-project.md) | Coding agents get Relay per project, through one skill shipped from this repo |
 
 Format: context, decision, alternatives, what would make us revisit.
 

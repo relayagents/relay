@@ -21,7 +21,8 @@ INSTRUCTIONS = (
     "Relay is your team's shared memory and switchboard. Use `recall` before answering questions about "
     "past decisions or work; `my_items` for what is assigned to you; `report` whenever you finish "
     "something (this is how standups get written); `ask` to reach a teammate's agent; `request_approval` "
-    "before any external write. Everything you do here is visible to your team."
+    "before an external write your human did not ask for in this session (their request in the "
+    "session is their approval). Everything you do here is visible to your team."
 )
 
 

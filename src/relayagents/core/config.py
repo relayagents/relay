@@ -73,8 +73,10 @@ class Settings(BaseSettings):
     slack_app_token: str = ""
     slack_team_channel: str = Field(default="", description="Channel id for summaries/digests.")
 
-    # Google Workspace via workspace-mcp (per-user OAuth handled by that service).
-    workspace_mcp_url: str = "http://workspace-mcp:8000/mcp"
+    # Google Workspace via workspace-mcp (per-user OAuth handled by that service). Empty means
+    # off: a default URL would build the connector, and report it configured, with nothing there.
+    # docker-compose.yml sets it only when GOOGLE_OAUTH_CLIENT_ID is set.
+    workspace_mcp_url: str = ""
 
     # Coding-agent sandbox image, advertised to user agents (they run it; Relay does not).
     sandbox_image: str = "ghcr.io/relayagents/relay-sandbox:latest"

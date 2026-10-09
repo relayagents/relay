@@ -1,0 +1,13 @@
+{
+  "name": "relay",
+  "displayName": "Relay",
+  "description": "Relay for coding agents: the team's decisions, action items, reports, and approvals, in the projects you connect to Relay",
+  "author": {
+    "name": "Agentic Learning AI Lab"
+  },
+  "homepage": "https://relayagents.dev",
+  "repository": "https://github.com/relayagents/relay",
+  "license": "Apache-2.0",
+  "keywords": ["relay", "team-memory", "mcp", "standups", "approvals"],
+  "defaultEnabled": false
+}

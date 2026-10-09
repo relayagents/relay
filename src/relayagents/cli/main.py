@@ -13,13 +13,15 @@ from typing import Annotated, Any
 import typer
 
 from relayagents import __version__
-from relayagents.cli.client import CONFIG_DIR, Credentials, RelayClient
+from relayagents.cli import agent_setup
+from relayagents.cli.client import CONFIG_DIR, Credentials, NotLoggedInError, RelayClient
 from relayagents.tools.cli import register_tool_commands
 
 app = typer.Typer(
     help="Relay: your team's shared memory and agent switchboard.",
     no_args_is_help=True,
     rich_markup_mode="markdown",
+    pretty_exceptions_show_locals=False,  # locals hold tokens; never print them in a traceback
 )
 meeting_app = typer.Typer(help="Meetings: upload audio or transcripts.")
 standup_app = typer.Typer(help="Standups on behalf of a teammate (used by the agent's cron).")
@@ -28,7 +30,11 @@ app.add_typer(standup_app, name="standup")
 
 
 def _client() -> RelayClient:
-    return RelayClient()
+    try:
+        return RelayClient()
+    except NotLoggedInError as exc:  # an expected state, not a crash: no traceback
+        typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
 
 
 def _echo_json(data: Any) -> None:
@@ -138,101 +144,125 @@ def me(
 
 # ---- setup-agent -------------------------------------------------------------------------------
 
-MCP_SNIPPETS = {
-    "claude-code": lambda url, token: {
-        "cmd": f'claude mcp add --transport http relay "{url}/mcp" --header "Authorization: Bearer {token}"',
-        "file": None,
-        "content": None,
-    },
-    "codex": lambda url, token: {
-        "cmd": None,
-        "file": "~/.codex/config.toml",
-        "content": f'[mcp_servers.relay]\nurl = "{url}/mcp"\nbearer_token_env_var = "RELAY_TOKEN"\n',
-    },
-    "opencode": lambda url, token: {
-        "cmd": None,
-        "file": "opencode.json",
-        "content": json.dumps(
-            {
-                "$schema": "https://opencode.ai/config.json",
-                "mcp": {
-                    "relay": {
-                        "type": "remote",
-                        "url": f"{url}/mcp",
-                        "enabled": True,
-                        "headers": {"Authorization": f"Bearer {token}"},
-                    }
-                },
-            },
-            indent=2,
-        ),
-    },
-    "hermes": lambda url, token: {
-        "cmd": None,
-        "file": "~/.hermes/config.yaml",
-        "content": f"mcp_servers:\n  relay:\n    url: {url}/mcp\n    headers:\n      Authorization: Bearer {token}\n",
-    },
-    "generic": lambda url, token: {
-        "cmd": None,
-        "file": None,
-        "content": json.dumps(
-            {
-                "mcpServers": {
-                    "relay": {
-                        "type": "http",
-                        "url": f"{url}/mcp",
-                        "headers": {"Authorization": f"Bearer {token}"},
-                    }
-                }
-            },
-            indent=2,
-        ),
-    },
-}
-
 
 @app.command("setup-agent")
 def setup_agent(
-    agent: Annotated[str, typer.Argument(help="claude-code | codex | opencode | hermes | generic")],
-    write: Annotated[
-        bool, typer.Option(help="Write the config file / run the command instead of printing.")
-    ] = False,
+    agent: Annotated[
+        str, typer.Argument(help="claude-code | codex | opencode | cursor | hermes | generic")
+    ],
+    write: Annotated[bool, typer.Option(help="Apply the steps instead of printing them.")] = False,
     agent_token: Annotated[
         bool,
         typer.Option(
-            help="Mint a dedicated agent token (actor <you>.<agent>) instead of reusing your human token."
+            help="Mint a dedicated agent token (actor `<you>.<agent>`) instead of reusing your human token."
         ),
     ] = True,
+    project: Annotated[
+        Path | None,
+        typer.Option(
+            help="A folder in the project to connect; its git work tree is used (default: here).",
+            exists=True,
+            file_okay=False,
+        ),
+    ] = None,
+    env_file: Annotated[
+        Path | None,
+        typer.Option(
+            help="Codex, OpenCode, Cursor: write the token's export line into this file (a"
+            " gitignored .envrc, or your shell profile) instead of printing it. A relative path"
+            " is relative to the project root.",
+            dir_okay=False,
+        ),
+    ] = None,
+    marketplace: Annotated[
+        str, typer.Option(help="Where Claude Code fetches the Relay plugin from.", hidden=True)
+    ] = agent_setup.MARKETPLACE_SOURCE,
 ) -> None:
-    """Point a coding agent or user agent at Relay's MCP server."""
-    if agent not in MCP_SNIPPETS:
+    """Connect a coding agent to Relay in this project only (claude-code, codex, opencode, cursor).
+
+    Relay stays off in your other projects. Run it from each project that should use Relay.
+    """
+    if agent not in agent_setup.AGENTS:
         typer.secho(
-            f"unknown agent {agent!r}; choose from {', '.join(MCP_SNIPPETS)}",
+            f"unknown agent {agent!r}; choose from {', '.join(agent_setup.AGENTS)}",
             fg=typer.colors.RED,
             err=True,
         )
         raise typer.Exit(1)
     c = _client()
-    token = c.creds.token
-    if agent_token and agent != "generic":
-        token = c.post(
-            "/v1/tokens", {"label": f"agent:{agent}", "actor_kind": "agent", "harness": agent}
-        )["token"]
-    snippet = MCP_SNIPPETS[agent](c.creds.url, token)
-    if snippet["cmd"]:
-        typer.echo(snippet["cmd"] if not write else "running: " + snippet["cmd"])
-        if write:
-            os.system(snippet["cmd"])
-        return
-    typer.echo(f"# {snippet['file'] or 'MCP config'}\n{snippet['content']}")
-    if write and snippet["file"]:
-        path = Path(os.path.expanduser(snippet["file"]))
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a") as f:
-            f.write("\n" + snippet["content"])
-        typer.echo(f"appended to {path}")
-    if agent == "codex":
-        typer.echo(f"\nexport RELAY_TOKEN={token}")
+    root = agent_setup.project_root(project or Path.cwd())
+    mint = agent_token and agent != "generic"
+    if env_file is not None and not env_file.expanduser().is_absolute():
+        env_file = root / env_file  # like --project: relative to the project, not the cwd
+    label = agent_setup.token_label(agent, root, env_file)
+    minted: dict[str, Any] | None = None
+    try:
+        # Plan with a placeholder first, so a config we cannot merge fails before a token exists.
+        agent_setup.plan(
+            agent,
+            c.creds.url,
+            TOKEN_PLACEHOLDER,
+            root,
+            marketplace=marketplace,
+            env_file=env_file,
+        )
+        token = c.creds.token
+        if mint and write:
+            minted = c.post("/v1/tokens", {"label": label, "actor_kind": "agent", "harness": agent})
+            token = minted["token"]
+        elif mint:
+            token = TOKEN_PLACEHOLDER  # a preview changes nothing, on the server included
+        steps = agent_setup.plan(
+            agent, c.creds.url, token, root, marketplace=marketplace, env_file=env_file
+        ).steps
+        for step in steps:
+            typer.echo(agent_setup.describe(step, reveal=not write))
+            if write:
+                agent_setup.apply(step)
+    except (agent_setup.SetupError, OSError) as exc:
+        if minted:
+            _revoke_tokens(c, [minted["token_id"]])  # nothing should hold a failed run's token
+        typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+    if minted:
+        # Setup is done and the new token is in use: a failure from here on must not undo it.
+        try:
+            tokens = c.get("/v1/tokens")
+        except Exception as exc:
+            typer.secho(
+                f"warning: connected, but could not list earlier tokens to revoke ({exc});"
+                " an earlier token for this project may still be live. Rerun setup-agent to"
+                " retire it.",
+                fg=typer.colors.YELLOW,
+                err=True,
+            )
+            return
+        previous = [
+            t["token_id"]
+            for t in tokens
+            if t["label"] == label and t["token_id"] != minted["token_id"] and not t["revoked_at"]
+        ]
+        if previous:
+            _revoke_tokens(c, previous)
+            typer.echo(f"Revoked {len(previous)} earlier token(s) for this project.")
+    if not write and agent != "generic":
+        typer.echo("\nNothing changed and no token was minted. Run again with --write to apply.")
+
+
+TOKEN_PLACEHOLDER = "<agent token, minted by --write>"
+
+
+def _revoke_tokens(c: RelayClient, token_ids: list[str]) -> None:
+    for token_id in token_ids:
+        try:
+            c.delete(f"/v1/tokens/{token_id}")
+        except Exception as exc:
+            typer.secho(
+                f"warning: could not revoke token {token_id} ({exc}); revoke it with"
+                f" DELETE /v1/tokens/{token_id}",
+                fg=typer.colors.YELLOW,
+                err=True,
+            )
 
 
 # ---- add-user (runs on the Relay node, talks to the DB directly) -------------------------------
@@ -323,9 +353,9 @@ def add_user(
         )
         typer.echo(out.human_token)
         typer.echo(
-            "\n== MCP config for their coding agent (or run `relay setup-agent <agent>` after login) =="
+            "\n== then, in each project that should use Relay, they run =="
+            "\n  relay setup-agent <claude-code|codex|opencode|cursor> --write"
         )
-        typer.echo(MCP_SNIPPETS["generic"](out.relay_url, out.human_token)["content"])
 
     asyncio.run(run())
 
