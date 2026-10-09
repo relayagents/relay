@@ -137,13 +137,21 @@ def generic_mcp_json(url: str, token: str) -> str:
     )
 
 
-def token_label(agent: str, project: Path) -> str:
-    """One label per agent, project, and machine, so a rerun can revoke exactly what it replaces.
+def token_label(agent: str, project: Path, env_file: Path | None = None) -> str:
+    """One label per place the token is kept, so a rerun can revoke exactly what it replaces.
 
-    The same agent in another project, or on another machine, keeps its own token.
+    Normally that is the agent, project, and machine: the same agent in another project, or on
+    another machine, keeps its own token. A token kept in a file outside the project (a shell
+    profile) is shared by every project that reads it, so it is labelled by that file instead,
+    and the next setup that writes there revokes the token it overwrites.
     """
-    key = hashlib.sha256(f"{socket.gethostname()}:{project.resolve()}".encode()).hexdigest()[:10]
-    name = re.sub(r"[^\w.-]", "-", project.name)[:20] or "root"
+    where = project.resolve()
+    if env_file is not None:
+        real = env_file.expanduser().resolve()
+        if not real.is_relative_to(where):
+            where = real
+    key = hashlib.sha256(f"{socket.gethostname()}:{where}".encode()).hexdigest()[:10]
+    name = re.sub(r"[^\w.-]", "-", where.name)[:20] or "root"
     return f"agent:{agent}:{name}:{key}"[:64]
 
 

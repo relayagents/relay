@@ -391,6 +391,53 @@ def test_token_label_is_per_project_and_fits_the_api(tmp_path: Path) -> None:
     assert len(long) <= 64
 
 
+def test_token_label_follows_a_shared_env_file(tmp_path: Path) -> None:
+    a, b, home = tmp_path / "a", tmp_path / "b", tmp_path / "home"
+    profile = home / ".zshrc"
+    # A profile serves every project, so its token is labelled by the profile...
+    assert s.token_label("codex", a, profile) == s.token_label("codex", b, profile)
+    assert s.token_label("codex", a, profile) != s.token_label("codex", a)
+    assert s.token_label("codex", a, profile) != s.token_label("opencode", a, profile)
+    # ...while a file inside the project keeps the per-project label.
+    assert s.token_label("codex", a, a / ".envrc") == s.token_label("codex", a)
+
+
+def test_setup_agent_shared_profile_revokes_the_token_it_overwrites(tmp_path, monkeypatch) -> None:
+    fake = _FakeClient()
+    home = tmp_path / "home"
+    profile = home / ".zshrc"
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    shared = s.token_label("codex", first, profile)
+    fake.existing = [{"token_id": "tok_from_first", "label": shared, "revoked_at": None}]
+    monkeypatch.setattr(main, "_client", lambda: fake)
+    monkeypatch.setattr(s, "project_root", lambda p: p)
+    monkeypatch.setenv("HOME", str(home))
+    args = ["setup-agent", "codex", "--project", str(second), "--env-file", str(profile)]
+    result = CliRunner().invoke(main.app, [*args, "--write"])
+    assert result.exit_code == 0, result.output
+    assert fake.minted[0]["label"] == shared
+    assert fake.revoked == ["tok_from_first"]  # overwritten in the profile, so revoked
+
+
+def test_setup_agent_relative_env_file_is_in_the_project(tmp_path, monkeypatch) -> None:
+    fake = _FakeClient()
+    project = tmp_path / "proj"
+    project.mkdir()
+    _git(project, "init", "-q")
+    (project / ".git" / "info" / "exclude").write_text(".envrc\n")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setattr(main, "_client", lambda: fake)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    args = ["setup-agent", "codex", "--project", str(project), "--env-file", ".envrc"]
+    result = CliRunner().invoke(main.app, [*args, "--write"])
+    assert result.exit_code == 0, result.output
+    assert (project / ".envrc").exists() and not (elsewhere / ".envrc").exists()
+
+
 def test_setup_agent_rejects_unknown_agent() -> None:
     result = CliRunner().invoke(main.app, ["setup-agent", "windsurf"])
     assert result.exit_code == 1

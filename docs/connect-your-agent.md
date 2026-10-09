@@ -119,8 +119,8 @@ step 1, so the config file holds no secret. Choose the file that sets that varia
   ```
 
   The profile holds one variable per agent for all projects. Each setup replaces the line with
-  its newest token. All of those tokens belong to the same agent, so projects connected earlier
-  keep working.
+  a new token and revokes the one it overwrote. All projects read that one line, so projects
+  connected earlier keep working once their next session starts.
 
 `--env-file` replaces an earlier line for the same variable and leaves the rest of the file
 alone. It refuses a file that git would track, such as a profile symlinked from a dotfiles repo.
