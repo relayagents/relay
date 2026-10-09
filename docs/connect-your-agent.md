@@ -126,8 +126,8 @@ step 1, so the config file holds no secret. Choose the file that sets that varia
 alone. It refuses a file that git would track, such as a profile symlinked from a dotfiles repo.
 If that happens, ask the human where the variable should go. It cannot see a bare-repo dotfiles
 setup (`git --git-dir=~/.dotfiles`). If `~/.dotfiles` or a similar folder exists, ask the human
-before writing to a profile. If the output says the file is readable by other users, pass that
-on. Do not print the file or the token.
+before writing to a profile. A file that other users could read is made private to the human,
+and the output says so; pass that on. Do not print the file or the token.
 
 Besides the token, the command writes the project's MCP config (`.codex/config.toml`,
 `opencode.json`, or `.cursor/mcp.json`) and installs the skill into `~/.agents/skills/relay`.
