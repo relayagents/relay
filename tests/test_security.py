@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import httpx
 
+from relayagents.api.auth import DEFAULT_SCOPES, mint_token
 from relayagents.api.routes.users import approve_device
+from relayagents.core.events import Actor
 from relayagents.tools.rest import TOOLS_PREFIX
 from relayagents.tools.runtime import redact
 from tests.conftest import FIXTURES, auth
@@ -325,3 +327,115 @@ async def test_events_actor_filter_includes_a_users_agents(client: httpx.AsyncCl
         )
     ).json()["events"]
     assert {e["actor"]["id"] for e in only} == {"grace.hermes"}
+
+
+async def _mint(services, actor: Actor, *scopes: str) -> dict[str, str]:  # type: ignore[no-untyped-def]
+    async with services.db.session() as session:
+        plain, _ = await mint_token(
+            session,
+            user_id=actor.user_id,
+            actor=actor,
+            label="narrow",
+            settings=services.settings,
+            issued_by=Actor.human(actor.user_id),
+            issued_via="api",
+            scopes=scopes,
+        )
+        await session.commit()
+    return auth(plain)
+
+
+async def test_rest_enforces_token_scopes(client: httpx.AsyncClient, services, team) -> None:  # type: ignore[no-untyped-def]
+    """REST honors a narrowed token the same way MCP does (``required_scopes``)."""
+    agent = Actor.agent("ada.hermes")
+    full = auth(team["grace"]["agent"])
+    event_id = (await client.get("/v1/events", headers=full)).json()[0]["id"]
+    # one task addressed to ada's agent, so ada's agent may read and update it
+    task_id = (
+        await client.post(
+            "/a2a/agents/ada.hermes",
+            json={"method": "message/send", "params": {"message": {"parts": [{"text": "hi"}]}}},
+            headers=full,
+        )
+    ).json()["result"]["id"]
+    send = {"method": "message/send", "params": {"message": {"parts": [{"text": "ping"}]}}}
+
+    def calls(h: dict[str, str]):  # type: ignore[no-untyped-def]
+        """(required scope, request) for every scoped REST surface."""
+        return [
+            ("tools", client.post(f"{TOOLS_PREFIX}/report", json={"text": "s"}, headers=h)),
+            ("events:read", client.get("/v1/events", headers=h)),
+            ("events:read", client.get(f"/v1/events/{event_id}", headers=h)),
+            (
+                "events:write",
+                client.post(
+                    "/v1/events",
+                    json={"payload": {"type": "report.posted", "text": "s"}},
+                    headers=h,
+                ),
+            ),
+            ("a2a", client.get("/a2a/inbox", headers=h)),
+            ("a2a", client.get("/a2a/agents", headers=h)),
+            ("a2a", client.post("/a2a/agents", json={"card": {"name": "hermes"}}, headers=h)),
+            ("a2a", client.post("/a2a/agents/grace.hermes", json=send, headers=h)),
+            ("a2a", client.get(f"/a2a/tasks/{task_id}", headers=h)),
+            ("a2a", client.post(f"/a2a/tasks/{task_id}", json={"state": "working"}, headers=h)),
+        ]
+
+    for held in ("", *DEFAULT_SCOPES):
+        h = await _mint(services, agent, *([held] if held else []))
+        for needed, call in calls(h):
+            r = await call
+            if needed == held:
+                assert r.is_success, (held, needed, r.status_code, r.text)
+                assert "error" not in r.json(), (held, needed, r.text)  # JSON-RPC errors are 200s
+            else:
+                assert r.status_code == 403, (held, needed, r.status_code, r.text)
+                assert r.json()["detail"] == f"this token lacks the {needed!r} scope"
+
+    # public surfaces stay public; identity routes need no scope
+    none = await _mint(services, agent)
+    assert (await client.get(TOOLS_PREFIX)).status_code == 200
+    assert (await client.get("/v1/me", headers=none)).status_code == 200
+
+
+async def test_minted_tokens_never_exceed_the_minting_tokens_scopes(  # type: ignore[no-untyped-def]
+    client: httpx.AsyncClient, services, team
+) -> None:
+    """A narrowed token cannot mint itself (or anyone) a broader one."""
+
+    async def scopes_of(h: dict[str, str]) -> list[str]:
+        return (await client.get("/v1/me", headers=h)).json()["scopes"]
+
+    # POST /v1/tokens: zero scopes in, zero scopes out, for a human or an agent token
+    bare = await _mint(services, Actor.human("grace"))
+    for kind in ("human", "agent"):
+        r = await client.post("/v1/tokens", json={"actor_kind": kind}, headers=bare)
+        assert r.status_code == 201, r.text
+        minted = auth(r.json()["token"])
+        assert await scopes_of(minted) == []
+        r = await client.post(f"{TOOLS_PREFIX}/report", json={"text": "x"}, headers=minted)
+        assert r.status_code == 403 and "'tools'" in r.json()["detail"]
+    narrow = await _mint(services, Actor.human("grace"), "events:read")
+    r = await client.post("/v1/tokens", json={}, headers=narrow)
+    assert await scopes_of(auth(r.json()["token"])) == ["events:read"]
+    # a full token still mints full tokens
+    r = await client.post("/v1/tokens", json={}, headers=auth(team["grace"]["human"]))
+    assert await scopes_of(auth(r.json()["token"])) == list(DEFAULT_SCOPES)
+
+    # an admin's narrowed token cannot reissue full tokens
+    admin = await _mint(services, Actor.human("ada"), "events:read")
+    r = await client.post(
+        "/v1/users", json={"id": "ada", "display_name": "Ada", "reissue": True}, headers=admin
+    )
+    assert r.status_code == 201, r.text
+    out = r.json()
+    assert await scopes_of(auth(out["human_token"])) == ["events:read"]
+    assert await scopes_of(auth(out["agent_token"])) == ["events:read"]
+
+    # nor approve a device login into a full token
+    d = (await client.post("/v1/auth/device", json={"user_id": "ada", "label": "cli"})).json()
+    r = await client.post(f"/v1/auth/device/{d['device_code']}/approve", headers=admin)
+    assert r.status_code == 200, r.text
+    token = (await client.get(f"/v1/auth/device/{d['device_code']}")).json()["token"]
+    assert await scopes_of(auth(token)) == ["events:read"]
