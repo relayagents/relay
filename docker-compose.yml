@@ -15,7 +15,7 @@ x-relay-env: &relay-env
   RELAY_MAX_UPLOAD_MB: ${RELAY_MAX_UPLOAD_MB:-512}
   RELAY_SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
   RELAY_SLACK_TEAM_CHANNEL: ${SLACK_TEAM_CHANNEL:-}
-  RELAY_WORKSPACE_MCP_URL: http://workspace-mcp:8000/mcp
+  RELAY_WORKSPACE_MCP_URL: ${GOOGLE_OAUTH_CLIENT_ID:+http://workspace-mcp:8000/mcp}   # on only with Google OAuth set up
   RELAY_SANDBOX_IMAGE: ${RELAY_SANDBOX_IMAGE:-ghcr.io/relayagents/relay-sandbox:latest}
 
 # The team model key. Extraction, embeddings, digests, graph: workers only.
