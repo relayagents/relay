@@ -169,7 +169,8 @@ def setup_agent(
         Path | None,
         typer.Option(
             help="Codex, OpenCode, Cursor: write the token's export line into this file (a"
-            " gitignored .envrc, or your shell profile) instead of printing it.",
+            " gitignored .envrc, or your shell profile) instead of printing it. A relative path"
+            " is relative to the project root.",
             dir_okay=False,
         ),
     ] = None,
@@ -191,7 +192,9 @@ def setup_agent(
     c = _client()
     root = agent_setup.project_root(project or Path.cwd())
     mint = agent_token and agent != "generic"
-    label = agent_setup.token_label(agent, root)
+    if env_file is not None and not env_file.expanduser().is_absolute():
+        env_file = root / env_file  # like --project: relative to the project, not the cwd
+    label = agent_setup.token_label(agent, root, env_file)
     minted: dict[str, Any] | None = None
     try:
         # Plan with a placeholder first, so a config we cannot merge fails before a token exists.

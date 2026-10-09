@@ -49,7 +49,9 @@ nothing regressed.
      `RELAY_CODEX_TOKEN` / `RELAY_OPENCODE_TOKEN` / `RELAY_CURSOR_TOKEN` (not `RELAY_TOKEN`, which
      the `relay` CLI prefers over its login), and install the skill at `~/.agents/skills/relay`,
      which all three read. `--env-file` writes the token's `export` line into a file git does not
-     track (a gitignored `.envrc`, a shell profile) instead of printing it.
+     track (a gitignored `.envrc`, a shell profile) instead of printing it. A token kept in a
+     file outside the project is shared by every project that reads it, so it is labelled by
+     that file rather than the project, and the next setup that writes there revokes it.
    - Hermes is unchanged: it runs in the team's container, where Relay is always on.
 
    Each run mints one agent token labelled for this agent, project, and machine, and revokes the
