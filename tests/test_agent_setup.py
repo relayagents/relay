@@ -241,6 +241,16 @@ def test_project_root_is_the_git_work_tree(tmp_path: Path) -> None:
     assert s.project_root(outside) == outside.resolve()
 
 
+def test_project_root_ignores_inherited_git_paths(tmp_path, monkeypatch) -> None:
+    other, project = tmp_path / "other", tmp_path / "proj"
+    for repo in (other, project):
+        repo.mkdir()
+        _git(repo, "init", "-q")
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(other))
+    assert s.project_root(project) == project.resolve()
+
+
 # ---- the command ---------------------------------------------------------------------------------
 
 

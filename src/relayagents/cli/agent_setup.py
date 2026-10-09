@@ -107,6 +107,16 @@ def skill_source() -> Traversable:
     return resources.files("relayagents") / "agent_plugin" / "skills" / SKILL_NAME
 
 
+def _git_env() -> dict[str, str]:
+    """Git asked about a path answers for that path's own repository, in a fixed language.
+
+    Inherited ``GIT_DIR`` / ``GIT_WORK_TREE`` would point it at another repository, so setup
+    would connect, or trust an ignore rule of, the wrong project.
+    """
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    return env | {"LC_ALL": "C", "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1"}
+
+
 def project_root(start: Path) -> Path:
     """The git work tree containing ``start``, or ``start`` itself outside a repository."""
     try:
@@ -116,6 +126,7 @@ def project_root(start: Path) -> Path:
             capture_output=True,
             text=True,
             check=False,
+            env=_git_env(),
         )
     except FileNotFoundError:
         return start.resolve()
@@ -372,9 +383,7 @@ def check_env_file(path: Path) -> None:
                 f"{real} is inside a git repository and git is not on PATH to check it"
             )
         return
-    # Ask about this file's own repository, in a fixed language, across mount points.
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    env |= {"LC_ALL": "C", "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1"}
+    env = _git_env()
 
     def ask(*args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
