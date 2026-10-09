@@ -26,3 +26,26 @@ async def connect(redis_url: str) -> ArqRedis:
         job_serializer=job_serializer,
         job_deserializer=job_deserializer,
     )
+
+
+# Name both queues explicitly. Inside an arq worker, ``ctx["redis"]`` defaults to that worker's
+# own queue, so an unqualified enqueue from relay-ingest would land back on relay:ingest.
+WORKER_QUEUE = "arq:queue"  # relay-workers (arq's default name)
+INGEST_QUEUE = "relay:ingest"  # relay-ingest, wherever the GPU is
+MEETING_JOBS = ("transcribe_meeting", "extract_meeting")
+
+
+async def enqueue_meeting_job(redis: ArqRedis, function: str, meeting_id: str) -> bool:
+    """Enqueue a meeting's next job under a fixed id, ``<function>:<meeting_id>``.
+
+    arq treats ``_job_id`` as unique: while that job is queued, running, or holding its result,
+    the enqueue is a no-op. That makes this safe to call from the upload route, the ingest worker,
+    and the stale-meeting sweeper at once. Returns False when arq already held the job.
+    """
+    if function not in MEETING_JOBS:
+        raise ValueError(f"not a meeting job: {function}")
+    queue = INGEST_QUEUE if function == "transcribe_meeting" else WORKER_QUEUE
+    job = await redis.enqueue_job(
+        function, meeting_id, _job_id=f"{function}:{meeting_id}", _queue_name=queue
+    )
+    return job is not None
