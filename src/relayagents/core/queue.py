@@ -35,7 +35,7 @@ INGEST_QUEUE = "relay:ingest"  # relay-ingest, wherever the GPU is
 MEETING_JOBS = ("transcribe_meeting", "extract_meeting")
 
 
-async def enqueue_meeting_job(redis: Any, function: str, meeting_id: str) -> bool:
+async def enqueue_meeting_job(redis: ArqRedis, function: str, meeting_id: str) -> bool:
     """Enqueue a meeting's next job under a fixed id, ``<function>:<meeting_id>``.
 
     arq treats ``_job_id`` as unique: while that job is queued, running, or holding its result,

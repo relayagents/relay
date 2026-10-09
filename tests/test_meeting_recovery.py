@@ -231,6 +231,113 @@ async def test_failed_handoff_leaves_the_meeting_for_the_sweeper(
     assert [j[0:2] for j in queue.jobs] == [("extract_meeting", ("mtg_handoff",))]
 
 
+class CountingTranscriber:
+    """FixtureTranscriber that counts runs and can run a side effect mid-transcription."""
+
+    def __init__(self, during: Any = None) -> None:
+        from relayagents.ingest.fixture import FixtureTranscriber
+
+        self.inner = FixtureTranscriber()
+        self.during = during
+        self.calls = 0
+
+    async def transcribe(self, audio: Path, *, meeting_id: str) -> Any:
+        self.calls += 1
+        if self.during is not None:
+            await self.during()
+        return await self.inner.transcribe(audio, meeting_id=meeting_id)
+
+
+async def _audio_meeting(
+    services: Services, tmp_path: Path, meeting_id: str, status: str, **kwargs: Any
+) -> None:
+    audio = tmp_path / meeting_id / "audio.wav"
+    audio.parent.mkdir()
+    audio.write_bytes(b"RIFF0000WAVE")
+    audio.with_suffix(".json").write_text((FIXTURES / "transcript_sample.json").read_text())
+    await _add_meeting(services, meeting_id, status, audio_path=str(audio), **kwargs)
+
+
+async def _status(services: Services, meeting_id: str) -> str:
+    async with services.db.session() as session:
+        meeting = await session.get(MeetingRow, meeting_id)
+    assert meeting is not None
+    return meeting.status
+
+
+@pytest.mark.parametrize("status", ["done", "extracting", "failed", "transcribing"])
+async def test_a_duplicate_transcription_ticket_backs_off(
+    services: Services, tmp_path: Path, status: str
+) -> None:
+    """An old random-id ticket still on relay:ingest at deploy can run after the fixed-id chain
+    has finished. Resetting the meeting to `queued` would get it extracted a second time."""
+    await _audio_meeting(services, tmp_path, "mtg_dup", status)
+    transcriber, queue = CountingTranscriber(), ArqLikeQueue(default_queue=INGEST_QUEUE)
+
+    await transcribe_meeting(
+        {"db": services.db, "transcriber": transcriber, "redis": queue, "job_try": 1}, "mtg_dup"
+    )
+
+    assert await _status(services, "mtg_dup") == status
+    assert transcriber.calls == 0 and queue.jobs == []
+
+
+async def test_a_queued_meeting_with_a_transcript_is_not_transcribed_again(
+    services: Services, tmp_path: Path
+) -> None:
+    """Between transcription and extraction the meeting is `queued`; a stale ticket running then
+    would race the extraction and could reset a `done` meeting when it finished."""
+    await _audio_meeting(services, tmp_path, "mtg_between", "queued", transcript_path="/t.json")
+    transcriber, queue = CountingTranscriber(), ArqLikeQueue(default_queue=INGEST_QUEUE)
+
+    result = await transcribe_meeting(
+        {"db": services.db, "transcriber": transcriber, "redis": queue}, "mtg_between"
+    )
+
+    assert result == "/t.json"
+    assert transcriber.calls == 0 and queue.jobs == []
+
+
+async def test_arq_retrying_a_timed_out_transcription_still_runs_it(
+    services: Services, tmp_path: Path
+) -> None:
+    """arq cancels a job past job_timeout and retries it with job_try > 1; the cancelled run
+    left the meeting `transcribing`, and the retry must reclaim it."""
+    await _audio_meeting(services, tmp_path, "mtg_slow", "transcribing")
+    transcriber, queue = CountingTranscriber(), ArqLikeQueue(default_queue=INGEST_QUEUE)
+
+    await transcribe_meeting(
+        {"db": services.db, "transcriber": transcriber, "redis": queue, "job_try": 2}, "mtg_slow"
+    )
+
+    assert transcriber.calls == 1 and await _status(services, "mtg_slow") == "queued"
+    assert [j[0:2] for j in queue.jobs] == [("extract_meeting", ("mtg_slow",))]
+
+
+async def test_a_transcription_that_lost_the_meeting_does_not_advance_it(
+    services: Services, tmp_path: Path
+) -> None:
+    async def move_on() -> None:
+        async with services.db.session() as session:
+            meeting = await session.get(MeetingRow, "mtg_moved")
+            assert meeting is not None
+            meeting.status = "done"
+            await session.commit()
+
+    await _audio_meeting(services, tmp_path, "mtg_moved", "queued")
+    queue = ArqLikeQueue(default_queue=INGEST_QUEUE)
+
+    await transcribe_meeting(
+        {"db": services.db, "transcriber": CountingTranscriber(move_on), "redis": queue},
+        "mtg_moved",
+    )
+
+    async with services.db.session() as session:
+        meeting = await session.get(MeetingRow, "mtg_moved")
+    assert meeting is not None and meeting.status == "done" and meeting.transcript_path is None
+    assert queue.jobs == []
+
+
 async def _meeting_with_transcript(services: Services, meeting_id: str, status: str) -> None:
     path = services.settings.data_dir / meeting_id / "transcript.json"
     path.parent.mkdir(parents=True)
