@@ -65,7 +65,12 @@ flowchart LR
 ## Connecting a coding agent
 
 Relay is on per project, never everywhere: your personal projects stay out of the team's log.
-From the root of a project that should use Relay, after `relay login`:
+The easy way is to let your agent do it. Open it in the project and say:
+
+> Connect this project to Relay by following https://github.com/relayagents/relay/blob/main/docs/connect-your-agent.md
+
+It installs the CLI, logs you in (you approve in Slack), and connects that project. By hand, from
+the root of a project that should use Relay, after `relay login`:
 
 ```bash
 relay setup-agent claude-code --write   # or: codex, opencode, cursor
@@ -78,6 +83,8 @@ relay setup-agent claude-code --write   # or: codex, opencode, cursor
   `opencode.json`, `.cursor/mcp.json`) that reads the token from `RELAY_CODEX_TOKEN` /
   `RELAY_OPENCODE_TOKEN` / `RELAY_CURSOR_TOKEN`, so the file holds no secret, and the skill in
   `~/.agents/skills/relay`. The skill does nothing in projects where Relay is not connected.
+  Add `--env-file .envrc` (gitignored, with direnv) or `--env-file ~/.zshrc` to have the token's
+  `export` line written there instead of printed; files git would track are refused.
 - Without `--write` it prints the steps and changes nothing. Run it again to replace this
   project's token; the one it replaces is revoked.
 

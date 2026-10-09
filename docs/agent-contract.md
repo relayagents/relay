@@ -33,6 +33,9 @@ The behavior above ships as a skill, `relay`, with one source at
 [`src/relayagents/agent_plugin/skills/relay/SKILL.md`](../src/relayagents/agent_plugin/skills/relay/SKILL.md):
 the Claude Code plugin carries it, and `setup-agent` installs it for Codex, OpenCode, and Cursor. The skill
 acts only when the Relay MCP tools are present in the session, so it stays quiet everywhere else.
+The agent can do the setup itself when its human asks: [connect-your-agent.md](connect-your-agent.md)
+is written for the agent to follow, and running `setup-agent` is the one time it uses the human's
+`relay` login.
 
 ## Optional: daily updates
 

@@ -68,3 +68,16 @@ def test_agent_plugin_is_wired_to_the_marketplace() -> None:
     front = re.match(r"---\n(.*?)\n---\n", SKILL.read_text(), flags=re.S)
     assert front and "name: relay\n" in front.group(1) + "\n"
     assert len(front.group(1)) <= 1024
+
+
+def test_connect_guide_matches_setup_agent() -> None:
+    # docs/connect-your-agent.md is followed by agents, word for word; keep its table true.
+    text = (DOCS / "connect-your-agent.md").read_text()
+    rows = dict(re.findall(r"^\| [^|]+ \| `([a-z-]+)` \| (.+?) \|$", text, flags=re.M))
+    assert set(rows) == set(agent_setup.PROJECT_AGENTS)
+    for agent, cell in rows.items():
+        env = agent_setup.TOKEN_ENV.get(agent)
+        assert (f"`{env}`" in cell) if env else cell.startswith("none"), agent
+    skill = SKILL.read_text()
+    assert "docs/connect-your-agent.md" in skill
+    assert f"<{'|'.join(agent_setup.PROJECT_AGENTS)}>" in skill
