@@ -188,8 +188,8 @@ def require_scope(scope: str) -> Callable[..., Awaitable[Principal]]:
 
 
 tools_principal = require_scope("tools")
-events_reader = require_scope("events:read")
-events_writer = require_scope("events:write")
+events_read_principal = require_scope("events:read")
+events_write_principal = require_scope("events:write")
 a2a_principal = require_scope("a2a")
 
 

@@ -7,7 +7,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from relayagents.api.auth import events_reader, events_writer, get_services
+from relayagents.api.auth import events_read_principal, events_write_principal, get_services
 from relayagents.core.events import EVENT_TYPES, Event
 from relayagents.core.indexing import index_later
 from relayagents.core.projections import apply as project
@@ -44,7 +44,7 @@ class AppendIn(BaseModel):
 @router.post("", status_code=201)
 async def append_event(
     body: AppendIn,
-    principal: Annotated[Principal, Depends(events_writer)],
+    principal: Annotated[Principal, Depends(events_write_principal)],
     services: Annotated[Services, Depends(get_services)],
 ) -> Event:
     etype = body.type or body.payload.get("type")
@@ -79,7 +79,7 @@ async def append_event(
 
 @router.get("")
 async def list_events(
-    _: Annotated[Principal, Depends(events_reader)],
+    _: Annotated[Principal, Depends(events_read_principal)],
     services: Annotated[Services, Depends(get_services)],
     since: str | None = None,
     type: Annotated[list[str] | None, Query()] = None,
@@ -107,7 +107,7 @@ async def event_types() -> list[str]:
 @router.get("/{event_id}")
 async def get_event(
     event_id: str,
-    _: Annotated[Principal, Depends(events_reader)],
+    _: Annotated[Principal, Depends(events_read_principal)],
     services: Annotated[Services, Depends(get_services)],
 ) -> Event:
     async with services.db.session() as session:
