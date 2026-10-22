@@ -2,6 +2,10 @@
 
 **Status:** accepted · 2026-10-22 · supersedes [ADR-0004](0004-hermes-reference-agent.md) · amends [ADR-0002](0002-substrate-not-framework.md)
 
+**Implementation:** this ADR records the decision; the code follows in two PRs. Decisions 1 to 3
+(retire Hermes, route to humans, add-user) land first; decision 4 (the watcher) second. Until the
+first lands, the Hermes image, connector, and `add-user.sh` container step still exist on `main`.
+
 ## Context
 
 Relay's first design gave every teammate an always-on remote agent: one Hermes container per
@@ -44,18 +48,18 @@ right people, and feeds the standups and digests Relay already builds from event
 ## Decision
 
 1. **No per-user remote agent.** The Hermes container, its image, the `connectors/hermes`
-   provisioning code, the `UserAgent` protocol, and the container step in `scripts/add-user.sh` are
-   removed. The reference teammate agent is the laptop coding agent connected per project
+   provisioning code, the `UserAgent` protocol, and the container step in `scripts/add-user.sh` go
+   away in the first implementation PR. The reference teammate agent is the laptop coding agent connected per project
    (ADR-0010). The A2A broker and `docs/agent-contract.md` stay for agents that register
    themselves (a custom agent, a long-running research run); Relay no longer provisions any.
-2. **Relay routes to humans, not to agents.** PM dispatch sends the assignee a Slack DM with the
-   item whether or not an agent is registered; today it marks the item unrouted. `ask` records the
-   question and DMs the person, and no longer fails when they have no registered agent. A2A
-   delivery still happens in addition when an agent exists. Standups are scheduled by the workers:
+2. **Relay routes to humans, not to agents.** PM dispatch will send the assignee a Slack DM with
+   the item whether or not an agent is registered; today it marks the item unrouted. `ask` will
+   record the question and DM the person instead of failing when they have no registered agent. A2A
+   delivery still happens in addition when an agent exists. Standups move to the workers:
    a per-minute cron finds users whose `standup_time` has arrived in their timezone and runs the
    existing gather, render, and submit path in their mode. The draft is fully deterministic; the
    agent rewording step that the Hermes bridge did is gone. ADR-0008 is unchanged.
-3. **`add-user` mints the human token only.** Agents get their own tokens when the person runs
+3. **`add-user` mints the human token only** (today it also mints one for Hermes). Agents get their own tokens when the person runs
    `relay setup-agent` in a project. Minting an agent token at user creation would leave an unused
    secret on the node.
 4. **A pull-request watcher, by polling.**
