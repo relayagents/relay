@@ -54,12 +54,18 @@ Its private memory, its model provider and key, its personality, and anything th
 
 ```python
 import httpx, time
+
 c = httpx.Client(base_url=RELAY_URL, headers={"Authorization": f"Bearer {AGENT_TOKEN}"})
-c.post("/a2a/agents", json={"harness": "custom", "card": {"name": "ada.custom", "description": "..."}})
+c.post(
+    "/a2a/agents", json={"harness": "custom", "card": {"name": "ada.custom", "description": "..."}}
+)
 while True:
     for task in c.get("/a2a/inbox", params={"wait": 25}).json():
         c.post(f"/a2a/tasks/{task['id']}", json={"state": "working"})
         answer = handle(task)  # your agent
-        c.post(f"/a2a/tasks/{task['id']}", json={"state": "completed", "message": {"role": "agent", "parts": [{"text": answer}]}})
+        c.post(
+            f"/a2a/tasks/{task['id']}",
+            json={"state": "completed", "message": {"role": "agent", "parts": [{"text": answer}]}},
+        )
         c.post("/v1/tools/report", json={"text": f"handled {task['id']}"})
 ```
