@@ -6,7 +6,7 @@ import json
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
@@ -16,6 +16,7 @@ from relayagents.core.events import Event, MeetingStarted
 from relayagents.core.ids import new_id
 from relayagents.core.models import MeetingRow
 from relayagents.core.protocols import Transcript
+from relayagents.core.queue import enqueue_meeting_job
 from relayagents.core.store import EventStore
 from relayagents.tools.context import Principal, Services
 
@@ -98,13 +99,11 @@ def _out(m: MeetingRow) -> MeetingOut:
     )
 
 
-async def _enqueue(request: Request, job: str, *args: Any, queue: str | None = None) -> None:
+async def _enqueue(request: Request, job: str, meeting_id: str) -> None:
     redis = getattr(request.app.state, "redis", None)
     if redis is None:
         return  # tests / no-redis dev: the CLI can run `relay worker --once`
-    await redis.enqueue_job(job, *args, _queue_name=queue) if queue else await redis.enqueue_job(
-        job, *args
-    )
+    await enqueue_meeting_job(redis, job, meeting_id)
 
 
 @router.post("", status_code=202)
@@ -163,7 +162,7 @@ async def upload_meeting(
     if transcript_path:
         await _enqueue(request, "extract_meeting", meeting_id)
     else:
-        await _enqueue(request, "transcribe_meeting", meeting_id, queue="relay:ingest")
+        await _enqueue(request, "transcribe_meeting", meeting_id)
     return _out(row)
 
 

@@ -9,13 +9,14 @@ from arq import cron
 from arq.connections import RedisSettings
 
 from relayagents.core.config import get_settings
-from relayagents.core.queue import job_deserializer, job_serializer
+from relayagents.core.queue import WORKER_QUEUE, job_deserializer, job_serializer
 from relayagents.workers.jobs import (
     daily_digest,
     embed_backlog,
     extract_meeting,
     index_events,
     rebuild_graph,
+    requeue_stale_meetings,
     semantic_recall,
 )
 
@@ -53,6 +54,7 @@ class WorkerSettings:
         rebuild_graph,
         semantic_recall,
         embed_backlog,
+        requeue_stale_meetings,
     ]
     cron_jobs = [
         cron(
@@ -62,11 +64,14 @@ class WorkerSettings:
             run_at_startup=False,
         ),
         cron(embed_backlog, minute={0, 15, 30, 45}, run_at_startup=True),
+        # Startup catches the common case (Redis restarted with the stack); hourly catches the
+        # rest. Meetings aren't urgent, and a sweep of in-flight rows costs one small query.
+        cron(requeue_stale_meetings, minute=5, run_at_startup=True),
     ]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(_settings.redis_url)
-    queue_name = "arq:queue"
+    queue_name = WORKER_QUEUE
     job_serializer = job_serializer
     job_deserializer = job_deserializer
     max_jobs = 4
