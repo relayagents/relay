@@ -384,6 +384,7 @@ def test_setup_agent_claude_code_write_runs_the_steps(tmp_path, monkeypatch) -> 
     )
     assert result.exit_code == 0, result.output
     assert len(calls) == 5 and calls[-1][:3] == ["claude", "mcp", "add"]
+    assert calls[-1][-1] == f"Authorization: Bearer {TOKEN}"  # masking is for display only
     assert TOKEN not in result.output  # applied commands are echoed masked
 
 
