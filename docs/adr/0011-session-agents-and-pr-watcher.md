@@ -71,16 +71,19 @@ right people, and feeds the standups and digests Relay already builds from event
      GitHub login is bound to one (`users.github_login`); `source` records that Relay observed the
      act on GitHub rather than the person acting in Relay. Unmapped logins fall back to the system
      actor `relay.github` with the login in the payload. Mapped actors are what make PRs appear in
-     `events --actor`, in the person's standup draft, and in the digest's shipped section with no
-     further work.
+     `events --actor` and in the person's standup draft with no further work, and in the digest's
+     shipped section once the digest counts `pr.merged`.
    - Slack stays quiet: one root message per PR in the team channel, everything after that as a
      thread reply, and the root edited on state change. Opened or ready-for-review tags the
      requested reviewers; a later review request tags that reviewer in the thread; a review tags
      the author with approved, changes requested, or commented; merged and closed post to the
-     thread and tag nobody. Drafts are recorded but not posted until ready. Bot authors are
-     skipped. A login with no mapped user is written as text, never tagged. A PR whose body or
+     thread and tag nobody. Draft PRs are ignored until they are marked ready for review; that is
+     when `pr.opened` is recorded and posted, so no separate event is needed for the transition.
+     Bot authors are skipped. A login with no mapped user is written as text, never tagged. A PR whose body or
      branch names a Relay item is linked to it (`item_id`) and the message says so; nothing closes
-     an item automatically.
+     an item automatically. The Slack message ref is written into the event payload after posting,
+     as `standup.posted` does, so replay rebuilds the thread; if the post fails the event is
+     recorded without a ref and the next change starts a new root message.
    - Configuration: a list of repositories, a poll interval, and a **read-only GitHub token given
      to `relay-workers` only**. This amends ADR-0002, which said Relay holds no GitHub token: Relay
      may hold a read-only credential for observing, never for writing. Writes to GitHub remain per
