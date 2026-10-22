@@ -53,10 +53,9 @@ def test_local_marketplace_path_is_not_sparse(tmp_path: Path) -> None:
     assert "--sparse" not in _runs(plan)[0].argv
 
 
-def test_describe_masks_the_token_only_when_asked(tmp_path: Path) -> None:
+def test_describe_never_shows_the_token(tmp_path: Path) -> None:
     add = _runs(s.plan("claude-code", URL, TOKEN, tmp_path))[-1]
-    assert TOKEN in s.describe(add, reveal=True)
-    masked = s.describe(add, reveal=False)
+    masked = s.describe(add)
     assert TOKEN not in masked and "Bearer ***" in masked
 
 
@@ -145,8 +144,8 @@ def test_codex_plan(tmp_path: Path) -> None:
     ]
     notes = "\n".join(st.text for st in plan.steps if isinstance(st, s.Note))
     assert "connects Relay in every project" in notes  # the old global entry is called out
-    assert f"export RELAY_CODEX_TOKEN={TOKEN}" in notes
-    assert "RELAY_TOKEN=" not in notes.replace("RELAY_CODEX_TOKEN=", "")
+    assert "$RELAY_CODEX_TOKEN" in notes and "--env-file" in notes
+    assert TOKEN not in notes
 
 
 # ---- OpenCode ------------------------------------------------------------------------------------
@@ -206,7 +205,7 @@ def test_cursor_plan(tmp_path: Path) -> None:
     ]
     notes = "\n".join(st.text for st in plan.steps if isinstance(st, s.Note))
     assert "connects Relay in every project" in notes
-    assert f"export RELAY_CURSOR_TOKEN={TOKEN}" in notes
+    assert "$RELAY_CURSOR_TOKEN" in notes and TOKEN not in notes
 
 
 # ---- skill install -------------------------------------------------------------------------------
@@ -292,16 +291,64 @@ def test_setup_agent_codex_writes_project_config(tmp_path, monkeypatch) -> None:
     ]
     monkeypatch.setattr(main, "_client", lambda: fake)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    result = CliRunner().invoke(
-        main.app, ["setup-agent", "codex", "--project", str(project), "--write"]
-    )
+    args = ["setup-agent", "codex", "--project", str(project), "--env-file", ".envrc"]
+    result = CliRunner().invoke(main.app, [*args, "--write"])
     assert result.exit_code == 0, result.output
     assert fake.minted == [{"label": label, "actor_kind": "agent", "harness": "codex"}]
     assert fake.revoked == ["tok_old"]  # only the token this run replaces
     config = (project / ".codex" / "config.toml").read_text()
     assert TOKEN not in config and "rly_human_token" not in config
     assert (tmp_path / "home" / ".agents" / "skills" / "relay" / "SKILL.md").exists()
-    assert f"export RELAY_CODEX_TOKEN={TOKEN}" in result.output
+    assert (project / ".envrc").read_text() == f"export RELAY_CODEX_TOKEN={TOKEN}\n"
+    assert TOKEN not in result.output
+
+
+@pytest.mark.parametrize("agent", list(s.TOKEN_ENV))
+def test_setup_agent_write_needs_an_env_file(tmp_path, monkeypatch, agent: str) -> None:
+    # Without a file to hold it, the token could only be printed, into an agent's transcript.
+    fake = _FakeClient()
+    monkeypatch.setattr(main, "_client", lambda: fake)
+    result = CliRunner().invoke(
+        main.app, ["setup-agent", agent, "--project", str(tmp_path), "--write"]
+    )
+    assert result.exit_code == 1 and "pass --env-file" in result.output
+    assert fake.minted == []
+    assert not any(tmp_path.iterdir())  # nothing written either
+
+
+@pytest.mark.parametrize("agent", s.AGENTS)
+@pytest.mark.parametrize("write", [False, True], ids=["preview", "write"])
+@pytest.mark.parametrize("agent_token", [True, False], ids=["minted", "human"])
+def test_setup_agent_never_prints_a_token(
+    tmp_path, monkeypatch, agent: str, write: bool, agent_token: bool
+) -> None:
+    # An agent running setup for its human reads all of this output into its transcript.
+    fake = _FakeClient()
+    project = tmp_path / "proj"
+    project.mkdir()
+    monkeypatch.setattr(main, "_client", lambda: fake)
+    monkeypatch.setattr(s, "project_root", lambda p: p)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    real_run = subprocess.run
+
+    def fake_claude(argv, **kw):
+        if argv[0] == "claude":
+            return subprocess.CompletedProcess(argv, 0, " ".join(argv), "")
+        return real_run(argv, **kw)
+
+    monkeypatch.setattr(s.subprocess, "run", fake_claude)
+    args = ["setup-agent", agent, "--project", str(project)]
+    if agent in s.TOKEN_ENV:
+        args += ["--env-file", ".envrc"]
+    if write:
+        args.append("--write")
+    if not agent_token:
+        args.append("--no-agent-token")
+    result = CliRunner().invoke(main.app, args)
+    assert result.exit_code == 0, result.output
+    assert fake.minted != [] if write and agent_token and agent != "generic" else fake.minted == []
+    assert TOKEN not in result.output
+    assert fake.creds.token not in result.output
 
 
 def test_setup_agent_preview_changes_nothing(tmp_path, monkeypatch) -> None:
@@ -318,7 +365,7 @@ def test_setup_agent_preview_changes_nothing(tmp_path, monkeypatch) -> None:
     )
     assert result.exit_code == 0, result.output
     assert fake.minted == [] and fake.revoked == []
-    assert f"Authorization: Bearer {main.TOKEN_PLACEHOLDER}" in result.output
+    assert "Authorization: Bearer ***" in result.output
     assert "no token was minted" in result.output
 
 
@@ -362,9 +409,8 @@ def test_setup_agent_mints_no_token_when_the_config_cannot_be_merged(tmp_path, m
     monkeypatch.setattr(s, "project_root", lambda p: p)
     (tmp_path / ".codex").mkdir()
     (tmp_path / ".codex" / "config.toml").write_text("[broken\n")
-    result = CliRunner().invoke(
-        main.app, ["setup-agent", "codex", "--project", str(tmp_path), "--write"]
-    )
+    args = ["setup-agent", "codex", "--project", str(tmp_path), "--env-file", ".envrc"]
+    result = CliRunner().invoke(main.app, [*args, "--write"])
     assert result.exit_code == 1 and "not valid TOML" in result.output
     assert fake.minted == []
 
@@ -459,6 +505,7 @@ def test_hermes_config_carries_the_minted_token(tmp_path: Path) -> None:
     assert isinstance(step, s.AppendFile)
     assert step.path == tmp_path / ".hermes" / "config.yaml"
     assert f"Authorization: Bearer {TOKEN}" in step.content
+    assert TOKEN not in s.describe(step) and "Bearer ***" in s.describe(step)
     s.apply(step)
     assert f"Authorization: Bearer {TOKEN}" in step.path.read_text()
 
@@ -556,7 +603,7 @@ def test_env_file_shared_with_others_is_announced_as_made_private(tmp_path: Path
     (home / ".zshrc").write_text("# mine\n")
     (home / ".zshrc").chmod(0o644)
     plan = s.plan("codex", URL, TOKEN, tmp_path / "proj", home=home, env_file=home / ".zshrc")
-    assert "now private to you" in s.describe(plan.steps[-1], reveal=False)
+    assert "now private to you" in s.describe(plan.steps[-1])
 
 
 def test_env_file_in_a_repo_is_refused_without_git(tmp_path, monkeypatch) -> None:
@@ -599,7 +646,7 @@ def test_env_file_plan_never_shows_the_token(tmp_path: Path) -> None:
     plan = s.plan("cursor", URL, TOKEN, tmp_path / "proj", home=home, env_file=home / ".zshrc")
     (set_env,) = [st for st in plan.steps if isinstance(st, s.SetEnv)]
     assert set_env == s.SetEnv(home / ".zshrc", "RELAY_CURSOR_TOKEN", TOKEN)
-    assert all(TOKEN not in s.describe(st, reveal=True) for st in plan.steps)
+    assert all(TOKEN not in s.describe(st) for st in plan.steps)
 
 
 def test_env_file_is_only_for_env_token_agents(tmp_path: Path) -> None:
@@ -636,9 +683,8 @@ def test_setup_agent_keeps_the_new_token_when_listing_fails(tmp_path, monkeypatc
     monkeypatch.setattr(main, "_client", lambda: fake)
     monkeypatch.setattr(s, "project_root", lambda p: p)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    result = CliRunner().invoke(
-        main.app, ["setup-agent", "codex", "--project", str(project), "--write"]
-    )
+    args = ["setup-agent", "codex", "--project", str(project), "--env-file", ".envrc"]
+    result = CliRunner().invoke(main.app, [*args, "--write"])
     assert result.exit_code == 0, result.output
     assert fake.revoked == []  # the working token stays
     assert "may still be live. Rerun setup-agent" in result.output

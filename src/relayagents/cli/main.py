@@ -168,9 +168,9 @@ def setup_agent(
     env_file: Annotated[
         Path | None,
         typer.Option(
-            help="Codex, OpenCode, Cursor: write the token's export line into this file (a"
-            " gitignored .envrc, or your shell profile) instead of printing it. A relative path"
-            " is relative to the project root.",
+            help="Codex, OpenCode, Cursor (required with --write): write the token's export line"
+            " into this file, a gitignored .envrc or your shell profile. A relative path is"
+            " relative to the project root.",
             dir_okay=False,
         ),
     ] = None,
@@ -185,6 +185,15 @@ def setup_agent(
     if agent not in agent_setup.AGENTS:
         typer.secho(
             f"unknown agent {agent!r}; choose from {', '.join(agent_setup.AGENTS)}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+    if write and agent in agent_setup.TOKEN_ENV and env_file is None:
+        # The token goes into a file or nowhere: printed, it would land in an agent's transcript.
+        typer.secho(
+            f"error: {agent} reads its token from ${agent_setup.TOKEN_ENV[agent]}; pass --env-file"
+            " with the file that sets it (a gitignored .envrc, or your shell profile)",
             fg=typer.colors.RED,
             err=True,
         )
@@ -216,7 +225,7 @@ def setup_agent(
             agent, c.creds.url, token, root, marketplace=marketplace, env_file=env_file
         ).steps
         for step in steps:
-            typer.echo(agent_setup.describe(step, reveal=not write))
+            typer.echo(agent_setup.describe(step))
             if write:
                 agent_setup.apply(step)
     except (agent_setup.SetupError, OSError) as exc:
@@ -354,7 +363,8 @@ def add_user(
         typer.echo(out.human_token)
         typer.echo(
             "\n== then, in each project that should use Relay, they run =="
-            "\n  relay setup-agent <claude-code|codex|opencode|cursor> --write"
+            "\n  relay setup-agent claude-code --write"
+            "\n  relay setup-agent <codex|opencode|cursor> --write --env-file <.envrc or profile>"
         )
 
     asyncio.run(run())

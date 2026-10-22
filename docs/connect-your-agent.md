@@ -24,7 +24,8 @@ why. Run every command from the project root.
 | Cursor | `cursor` | `RELAY_CURSOR_TOKEN` |
 
 If you are another agent, stop and tell the human that per-project setup does not support it yet.
-Do not use `generic`: it puts the human's own token in the config.
+Do not use `generic`: it only prints a config template, and the token for it would be up to the
+human.
 
 ## 2. Install the `relay` CLI
 
@@ -95,7 +96,8 @@ Both are scoped to this folder and to this human. Go to step 5.
 
 **Codex, OpenCode, Cursor:** the project's MCP config reads the token from the variable in
 step 1, so the config file holds no secret. Choose the file that sets that variable, then let
-`setup-agent` write it there with `--env-file`. That way the token never appears in your output.
+`setup-agent` write it there with `--env-file` (required with `--write`). The token never
+appears in your output.
 
 - **If `direnv` is set up** (`command -v direnv` finds it, and
   `grep -l 'direnv hook' ~/.zshrc ~/.bashrc ~/.bash_profile ~/.config/fish/config.fish` finds a

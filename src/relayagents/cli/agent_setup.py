@@ -7,10 +7,13 @@ that the printed form and the applied form cannot drift and tests can check eith
   the MCP server at local scope. Both are private to this user and this folder.
 - Codex, OpenCode, and Cursor: write the project's own MCP config with the token read from an
   environment variable, so the file holds no secret, and install the skill once at
-  ``~/.agents/skills``. The skill does nothing where the Relay tools are not connected. With
-  ``--env-file``, the token goes straight into that file (refused if git would track it), so an
-  agent running setup for its human never has the token in its output.
-- Hermes and generic: unchanged; Hermes runs in the team's container, where Relay is always on.
+  ``~/.agents/skills``. The skill does nothing where the Relay tools are not connected. The
+  token goes straight into the ``--env-file`` (refused if git would track it).
+- Hermes: unchanged; it runs in the team's container, where Relay is always on. Generic: a
+  config template to fill in, since setup has nowhere to put a token.
+
+No step ever prints a token, previewed or applied: an agent running setup for its human reads
+this output, and a token in it would land in the agent's transcript.
 """
 
 from __future__ import annotations
@@ -46,6 +49,7 @@ TOKEN_ENV = {
     "cursor": "RELAY_CURSOR_TOKEN",
 }
 SKILL_NAME = "relay"
+GENERIC_TOKEN = "<token>"
 
 
 class SetupError(Exception):
@@ -56,7 +60,7 @@ class SetupError(Exception):
 class Run:
     argv: list[str]
     cwd: Path
-    secret: str | None = None  # masked when the step is described after it has been applied
+    secret: str | None = None  # never described, never in an error
     allow_failure: bool = False
     already_done: str | None = None  # a failure whose output says this means "nothing to do"
 
@@ -65,12 +69,14 @@ class Run:
 class WriteFile:
     path: Path
     content: str
+    secret: str | None = None  # never described
 
 
 @dataclass(frozen=True)
 class AppendFile:
     path: Path
     content: str
+    secret: str | None = None  # never described
 
 
 @dataclass(frozen=True)
@@ -210,10 +216,19 @@ def plan(
             AppendFile(
                 home / ".hermes" / "config.yaml",
                 f"mcp_servers:\n  relay:\n    url: {url}/mcp\n    headers:\n      Authorization: Bearer {token}\n",
+                secret=token,
             )
         ]
     else:
-        p.steps = [Note(f"Add this to your agent's MCP config:\n{generic_mcp_json(url, token)}")]
+        # Nothing to write, so nothing to hold a token: a printed one would be the human's own.
+        p.steps = [
+            Note(
+                f"Add this to your agent's MCP config, with a Relay token in place of {GENERIC_TOKEN}:\n"
+                f"{generic_mcp_json(url, GENERIC_TOKEN)}\n"
+                'Use a token minted for that agent (POST /v1/tokens with actor_kind "agent"),'
+                " not your own login. setup-agent never prints a token."
+            )
+        ]
     return p
 
 
@@ -335,7 +350,10 @@ def _plan_cursor(
 def _token_steps(
     env: str, token: str, harness: str, project: Path, env_file: Path | None, *, trust: bool
 ) -> tuple[list[SetEnv], str]:
-    """Where the agent token goes: into ``env_file`` (never printed), or a line to copy."""
+    """Where the agent token goes: into ``env_file``, never onto the screen.
+
+    Without one there is only the reminder: ``--write`` refuses to run without it.
+    """
     if env_file is not None:
         steps = [SetEnv(env_file, env, token)]
         lines = [
@@ -348,11 +366,8 @@ def _token_steps(
     else:
         steps = []
         lines = [
-            f"{harness} reads the agent token from ${env}. Set it where {harness} starts, for"
-            " example in",
-            "your shell profile or a gitignored .envrc in this project (direnv), or rerun with"
-            " --env-file:",
-            f"  export {env}={token}",
+            f"{harness} reads the agent token from ${env}. --write needs --env-file to set it in",
+            "a gitignored .envrc in this project (direnv) or your shell profile; it is never printed.",
         ]
     lines += [
         f"The config file holds no secret, so committing it opts {project.name} in for teammates too;",
@@ -504,22 +519,23 @@ def merge_cursor_config(existing: str, url: str, env: str) -> str:
 # ---- describing and applying --------------------------------------------------------------------
 
 
-def describe(step: Step, *, reveal: bool) -> str:
-    """Human-readable form. ``reveal=False`` masks the token in commands that are about to run."""
+def describe(step: Step) -> str:
+    """Human-readable form, with the token masked whether the step is previewed or applied."""
     if isinstance(step, Run):
-        args = [
-            a.replace(step.secret, "***") if step.secret and not reveal else a for a in step.argv
-        ]
-        return "$ " + " ".join(_quote(a) for a in args)
+        return "$ " + " ".join(_quote(_mask(a, step.secret)) for a in step.argv)
     if isinstance(step, WriteFile):
-        return f"# write {step.path}\n{step.content}"
+        return f"# write {step.path}\n{_mask(step.content, step.secret)}"
     if isinstance(step, AppendFile):
-        return f"# append to {step.path}\n{step.content}"
+        return f"# append to {step.path}\n{_mask(step.content, step.secret)}"
     if isinstance(step, InstallSkill):
         return f"# install the relay skill into {step.dest}"
     if isinstance(step, SetEnv):
         return f"# set {step.name} in {step.path} (the token is not shown)"
     return step.text
+
+
+def _mask(text: str, secret: str | None) -> str:
+    return text.replace(secret, "***") if secret else text
 
 
 def _quote(arg: str) -> str:
@@ -540,9 +556,7 @@ def apply(step: Step, *, runner: Runner | None = None) -> None:
         if step.already_done and step.already_done in detail:
             return
         if done.returncode != 0 and not step.allow_failure:
-            if step.secret:
-                detail = detail.replace(step.secret, "***")
-            raise SetupError(f"`{' '.join(step.argv[:3])}` failed: {detail}")
+            raise SetupError(f"`{' '.join(step.argv[:3])}` failed: {_mask(detail, step.secret)}")
     elif isinstance(step, WriteFile):
         step.path.parent.mkdir(parents=True, exist_ok=True)
         step.path.write_text(step.content)

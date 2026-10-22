@@ -73,7 +73,8 @@ It installs the CLI, logs you in (you approve in Slack), and connects that proje
 the root of a project that should use Relay, after `relay login`:
 
 ```bash
-relay setup-agent claude-code --write   # or: codex, opencode, cursor
+relay setup-agent claude-code --write
+relay setup-agent codex --write --env-file .envrc   # or opencode, cursor; or --env-file ~/.zshrc
 ```
 
 - **Claude Code** gets the Relay plugin (it carries the `relay` skill) and the MCP server, both at
@@ -83,10 +84,11 @@ relay setup-agent claude-code --write   # or: codex, opencode, cursor
   `opencode.json`, `.cursor/mcp.json`) that reads the token from `RELAY_CODEX_TOKEN` /
   `RELAY_OPENCODE_TOKEN` / `RELAY_CURSOR_TOKEN`, so the file holds no secret, and the skill in
   `~/.agents/skills/relay`. The skill does nothing in projects where Relay is not connected.
-  Add `--env-file .envrc` (gitignored, with direnv) or `--env-file ~/.zshrc` to have the token's
-  `export` line written there instead of printed; files git would track are refused.
+  `--env-file` names the file that gets the token's `export` line: a gitignored `.envrc` (with
+  direnv) or your shell profile. Files git would track are refused.
 - Without `--write` it prints the steps and changes nothing. Run it again to replace this
-  project's token; the one it replaces is revoked.
+  project's token; the one it replaces is revoked. It never prints a token, so it is safe for
+  your agent to run.
 
 The skill tells the agent when to report, when to ask for approval, and never to fall back to your
 own `relay` login. Why it works this way: [ADR-0010](docs/adr/0010-coding-agents-opt-in-per-project.md).

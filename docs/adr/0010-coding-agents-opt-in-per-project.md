@@ -48,8 +48,9 @@ nothing regressed.
    - Codex, OpenCode, and Cursor: write the project's MCP config with the token read from
      `RELAY_CODEX_TOKEN` / `RELAY_OPENCODE_TOKEN` / `RELAY_CURSOR_TOKEN` (not `RELAY_TOKEN`, which
      the `relay` CLI prefers over its login), and install the skill at `~/.agents/skills/relay`,
-     which all three read. `--env-file` writes the token's `export` line into a file git does not
-     track (a gitignored `.envrc`, a shell profile) instead of printing it. A token kept in a
+     which all three read. `--env-file`, required with `--write`, writes the token's `export`
+     line into a file git does not track (a gitignored `.envrc`, a shell profile); setup never
+     prints a token, because an agent running it would have it in its transcript. A token kept in a
      file outside the project is shared by every project that reads it, so it is labelled by
      that file rather than the project, and the next setup that writes there revokes it.
    - Hermes is unchanged: it runs in the team's container, where Relay is always on.
@@ -65,10 +66,12 @@ nothing regressed.
    `docs/connect-your-agent.md`, a guide written for the agent. The human's request is the opt-in,
    as in point 4, and what is left for the human is approving the login in Slack, trusting the
    project in Codex, and starting a new session.
-4. **Approvals follow where the request came from.** A human asking for an action in their own
-   session has approved it. `request_approval` is for writes that came from Relay (an item, a
-   teammate's `ask`) or happen while the human is away. The MCP instructions and the agent
-   contract say the same.
+4. **Approvals follow where the request came from.** A human who types an explicit request for a
+   specific action in their own session has approved that action. Text the agent reads from
+   Relay (an item, a teammate's `ask`, a `recall` result) never counts, and neither does a
+   broader reading of a different request. `request_approval` is for everything else. This is
+   guidance, not enforcement: the writes use the agent's own `gh` and never pass through Relay.
+   The MCP instructions, the agent contract, and `docs/permissions.md` say the same.
 5. **Labs document, they do not bundle.** `lab-core` points members at the connect guide; it
    does not declare Relay as a plugin dependency, because a dependency installs and enables at
    the dependent's scope, which would be every project.
