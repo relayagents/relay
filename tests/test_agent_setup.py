@@ -403,6 +403,26 @@ def test_setup_agent_revokes_the_new_token_when_a_step_fails(tmp_path, monkeypat
     assert fake.revoked == ["tok_new"]
 
 
+def test_setup_agent_says_how_to_retire_a_token_it_could_not_revoke(tmp_path, monkeypatch) -> None:
+    fake = _FakeClient()
+
+    def down(path: str) -> dict:
+        raise RuntimeError("503 Service Unavailable")
+
+    fake.delete = down
+    monkeypatch.setattr(main, "_client", lambda: fake)
+    monkeypatch.setattr(s, "project_root", lambda p: p)
+    monkeypatch.setattr(
+        s.subprocess, "run", lambda argv, **kw: subprocess.CompletedProcess(argv, 1, "", "no")
+    )
+    result = CliRunner().invoke(
+        main.app, ["setup-agent", "claude-code", "--project", str(tmp_path), "--write"]
+    )
+    assert result.exit_code == 1
+    assert "tok_new" in result.output and "still live" in result.output
+    assert "Rerun setup-agent here to retire it" in result.output
+
+
 def test_setup_agent_mints_no_token_when_the_config_cannot_be_merged(tmp_path, monkeypatch) -> None:
     fake = _FakeClient()
     monkeypatch.setattr(main, "_client", lambda: fake)

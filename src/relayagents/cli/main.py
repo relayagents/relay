@@ -266,9 +266,10 @@ def _revoke_tokens(c: RelayClient, token_ids: list[str]) -> None:
         try:
             c.delete(f"/v1/tokens/{token_id}")
         except Exception as exc:
+            # Nothing more to try from here; a successful rerun revokes every token with its label.
             typer.secho(
-                f"warning: could not revoke token {token_id} ({exc}); revoke it with"
-                f" DELETE /v1/tokens/{token_id}",
+                f"warning: could not revoke token {token_id} ({exc}); it is still live. Rerun"
+                f" setup-agent here to retire it, or revoke it with DELETE /v1/tokens/{token_id}",
                 fg=typer.colors.YELLOW,
                 err=True,
             )
