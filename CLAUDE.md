@@ -44,7 +44,9 @@ Docker is not required for tests. CI runs the same commands plus the Postgres mi
 ## How we work
 
 - **Branch, never push to `main`.** `main` is protected: PRs only, CI must pass, linear history,
-  one maintainer review. Name branches `feat/...`, `fix/...`, `docs/...`, `ci/...`.
+  one maintainer review. Name branches `feat/...`, `fix/...`, `docs/...`, `ci/...`. Without write
+  access, branch in a fork and open the PR from there (see "Pull requests from a fork" in
+  `CONTRIBUTING.md`).
 - **Small conventional commits.** `feat(core): ...`, `fix(api): ...`, `docs: ...`, `test: ...`,
   `chore: ...`. Say why in the body when it isn't obvious.
 - **Self-review before you open the PR.** Read your own diff as a reviewer would. If you are a
@@ -60,7 +62,8 @@ Docker is not required for tests. CI runs the same commands plus the Postgres mi
   fresh round on the new diff. Keep going until a round has no substantive findings, typically
   four or five rounds. On each inline finding, reply with the fixing commit and resolve the
   thread, or reply with a one-line reason and leave it open if you reject it. Silence a PR with
-  `outerloop:no-review` only for trivial changes.
+  `outerloop:no-review` only for trivial changes. On a fork PR there is no round to wait for:
+  skip this step, say the PR came from a fork, and request the maintainer's review directly.
 - **Rebase-merge** after CI is green and a maintainer other than the author has approved (see
   `.github/CODEOWNERS`). Once that approval exists, the author may merge.
 - **Ask before big changes.** A new dependency, a schema change, a new service in compose, or

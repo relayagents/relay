@@ -5,8 +5,13 @@ of everything below and is what coding agents read; humans should read it too.
 
 ## Setup
 
+You don't need write access to contribute. Fork the repo and work in your fork; the
+[GitHub CLI](https://cli.github.com) does the fork, the clone, and an `upstream` remote in one step
+(or fork on github.com, clone your fork, and `git remote add upstream https://github.com/relayagents/relay`).
+Maintainers with write access can clone `relayagents/relay` directly and push branches to it.
+
 ```bash
-git clone https://github.com/relayagents/relay && cd relay
+gh repo fork relayagents/relay --clone && cd relay
 uv sync --extra graph
 uv run pytest -q
 uv run ruff check src tests && uv run ruff format --check src tests
@@ -21,7 +26,8 @@ run in CI.
    schema change, new compose service, or event-schema change: write a short ADR in `docs/adr/`
    first (copy the shape of an existing one: context, decision, alternatives, revisit if).
 2. **Branch from `main`**: `feat/...`, `fix/...`, `docs/...`, `ci/...`. Never push to `main`; it is
-   protected (PRs only, CI required, linear history, maintainer review).
+   protected (PRs only, CI required, linear history, maintainer review). In a fork, start from the
+   latest upstream: `git fetch upstream && git switch -c docs/my-fix upstream/main`.
 3. **Small conventional commits**: `feat(core): ...`, `fix(api): ...`, `docs: ...`, `test: ...`,
    `chore: ...`. If an AI coding agent wrote or co-wrote the change, keep the `Co-Authored-By`
    trailer it adds; we disclose that.
@@ -45,6 +51,22 @@ run in CI.
    force-pushes, until approved.
 8. **Rebase-merge.** Once a maintainer other than you has approved and CI is green, you (or the
    maintainer) rebase-merge. If `main` moved, click "Update branch" and let CI rerun first.
+
+### Pull requests from a fork
+
+The same workflow, with four differences:
+
+- **CI may wait for a maintainer.** GitHub holds workflow runs on a first-time contributor's PR
+  until a maintainer approves them, so CI may show as pending at first. That's expected.
+- **No outerloop review.** The advisory reviewer skips fork PRs because it would expose its model
+  key to code from outside the repo, and applying labels needs repository access. Steps 5 and 6
+  don't apply, so the maintainer's review is the first one; the self-review in step 4 matters more.
+  Say in the PR that it came from a fork. For a large change, a maintainer may push your branch
+  into the repo to run the advisory reviewer on it.
+- **Leave "Allow edits by maintainers" ticked** when you open the PR, so a maintainer can update
+  your branch when `main` moves or push a small fix.
+- **A maintainer merges.** You can't merge into this repo, so a maintainer rebase-merges once the
+  PR is approved and CI is green.
 
 ## Rules that tests enforce
 
