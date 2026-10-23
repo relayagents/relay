@@ -12,8 +12,8 @@ Relay's first design gave every teammate an always-on remote agent: one Hermes c
 person on the Relay node (ADR-0004). It never ran. The Hermes image assumes an invocation Hermes
 does not have (#24), the compose stack has not booted end to end (#33), and each person would have
 had two agent surfaces, the container and their laptop coding agent, whose context and behavior
-drift apart. Meanwhile ADR-0010 (PR #39) connected the laptop coding agent to Relay per project,
-with its own token and a skill that says how to behave. That covers "this person's agent"
+drift apart. Meanwhile ADR-0010, proposed in PR #39 and not merged yet, connects the laptop coding
+agent to Relay per project, with its own token and a skill that says how to behave. That covers "this person's agent"
 whenever they have a session open.
 
 Issue #40 laid out the alternatives (one hub with session agents, a shared scheduler, a team agent
@@ -50,7 +50,7 @@ right people, and feeds the standups and digests Relay already builds from event
 1. **No per-user remote agent.** The Hermes container, its image, the `connectors/hermes`
    provisioning code, the `UserAgent` protocol, and the container step in `scripts/add-user.sh` go
    away in the first implementation PR. The reference teammate agent is the laptop coding agent connected per project
-   (ADR-0010). The A2A broker and `docs/agent-contract.md` stay for agents that register
+   (ADR-0010, PR #39; this ADR merges after it). The A2A broker and `docs/agent-contract.md` stay for agents that register
    themselves (a custom agent, a long-running research run); Relay no longer provisions any.
 2. **Relay routes to humans, not to agents.** PM dispatch will send the assignee a Slack DM with
    the item whether or not an agent is registered; today it marks the item unrouted. `ask` will
@@ -94,9 +94,8 @@ right people, and feeds the standups and digests Relay already builds from event
      team-level credential: a read-only one, for observing, never for writing. Writes to GitHub
      remain per user, under that user's own token, in their own agent.
 5. **No hub agent.** "One central node" means Relay as it is: the event log, workers, broker, and
-   Slack app. Relay's PM stays deterministic, and the only model calls on the node remain
-   extraction, embeddings, and the digest. Nothing in this ADR adds a model call on a person's
-   behalf.
+   Slack app. Relay's PM and digest stay deterministic, and the only model calls on the node
+   remain extraction and embeddings. Nothing in this ADR adds a model call on a person's behalf.
 
 ## Deferred, and why
 
