@@ -1,0 +1,15 @@
+{
+  "name": "relayagents",
+  "description": "Relay's plugin for coding agents",
+  "owner": {
+    "name": "Agentic Learning AI Lab"
+  },
+  "plugins": [
+    {
+      "name": "relay",
+      "source": "./src/relayagents/agent_plugin",
+      "description": "Relay for coding agents: the team's decisions, action items, reports, and approvals, in the projects you connect to Relay",
+      "license": "Apache-2.0"
+    }
+  ]
+}

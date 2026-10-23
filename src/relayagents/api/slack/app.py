@@ -91,26 +91,40 @@ async def _resolve_from_slack(
                 text="Only the person this approval was requested of can resolve it.",
             )
             return
-        row = await approvals.resolve(
+        row, won = await approvals.resolve_once(
             session, approval_id=approval_id, decision=decision, resolved_by=user_id
         )
         await session.commit()
-    verdict = ":white_check_mark: Approved" if decision == "approved" else ":no_entry: Denied"
+    # Show what the approval is now, not what was clicked: an expired approval or a second click
+    # on a decided one changed nothing.
+    verdict = VERDICTS.get(row.status, f":grey_question: {row.status.title()}")
+    by = (
+        f" by <@{slack_user}>"
+        if won
+        else (f" by <@{slack_user}> earlier" if row.resolved_by else "")
+    )
     with contextlib.suppress(Exception):
         await client.chat_update(
             channel=body["channel"]["id"],
             ts=body["message"]["ts"],
-            text=f"{verdict} by <@{slack_user}>: {row.action}",
+            text=f"{verdict}{by}: {row.action}",
             blocks=[
                 {
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f"{verdict} by <@{slack_user}>\n> {row.action}\n`{approval_id}`",
+                        "text": f"{verdict}{by}\n> {row.action}\n`{approval_id}`",
                     },
                 }
             ],
         )
+
+
+VERDICTS = {
+    "approved": ":white_check_mark: Approved",
+    "denied": ":no_entry: Denied",
+    "expired": ":hourglass: Expired before a decision",
+}
 
 
 async def _login_from_slack(

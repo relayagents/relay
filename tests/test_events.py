@@ -52,8 +52,8 @@ SAMPLES: dict[str, ev.Payload] = {
     "tool.result": ev.ToolResult(call_id="call_1", tool="report", ok=True, duration_ms=12),
     "agent.message": ev.AgentMessage(
         task_id="task_1",
-        from_agent="ada.hermes",
-        to_agent="grace.hermes",
+        from_agent="ada.claude-code",
+        to_agent="grace.claude-code",
         text="Can you take item_1?",
         surfaced_to=["grace"],
     ),
@@ -75,14 +75,16 @@ SAMPLES: dict[str, ev.Payload] = {
     "token.issued": ev.TokenIssued(
         token_id="tok_1",
         user_id="ada",
-        token_actor=Actor.agent("ada.hermes"),
-        label="agent:hermes",
+        token_actor=Actor.agent("ada.claude-code"),
+        label="agent:claude-code",
         expires_at=NOW,
         issued_via="add_user",
     ),
     "token.revoked": ev.TokenRevoked(token_id="tok_1", user_id="ada", reason="laptop lost"),
     "user.updated": ev.UserUpdated(user_id="ada", changes={"standup_mode": "auto"}),
-    "agent.registered": ev.AgentRegistered(agent_id="ada.hermes", user_id="ada", harness="hermes"),
+    "agent.registered": ev.AgentRegistered(
+        agent_id="ada.claude-code", user_id="ada", harness="claude-code"
+    ),
 }
 
 
@@ -161,5 +163,5 @@ def test_visibility_has_no_private_scope() -> None:
 
 
 def test_actor_user_id() -> None:
-    assert Actor.agent("ada.hermes").user_id == "ada"
+    assert Actor.agent("ada.claude-code").user_id == "ada"
     assert Actor.human("ada").user_id == "ada"

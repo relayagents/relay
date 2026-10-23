@@ -79,19 +79,14 @@ async def get_agent(session: AsyncSession, agent_id: str) -> AgentRow | None:
 
 
 async def agent_for_user(session: AsyncSession, user_id: str) -> AgentRow | None:
-    rows = list(
-        (
-            await session.scalars(
-                select(AgentRow).where(AgentRow.user_id == user_id).order_by(AgentRow.created_at)
-            )
-        ).all()
+    """The user's most recently seen agent, if any. Relay reaches the human first (ADR-0011);
+    this only picks which agent, when one exists, also receives the task."""
+    return await session.scalar(
+        select(AgentRow)
+        .where(AgentRow.user_id == user_id)
+        .order_by(AgentRow.last_seen_at.desc().nullslast(), AgentRow.created_at.desc())
+        .limit(1)
     )
-    if not rows:
-        return None
-    for r in rows:
-        if r.harness == "hermes":
-            return r
-    return rows[0]
 
 
 def _row_to_task(row: A2ATaskRow) -> Task:

@@ -108,7 +108,7 @@ async def test_rest_and_mcp_return_the_same_thing(app, client: httpx.AsyncClient
             assert not res.is_error, res
             mcp_events = res.structured_content["events"]
     assert [e["id"] for e in mcp_events] == [e["id"] for e in rest_events]
-    assert mcp_events[0]["actor"] == {"kind": "agent", "id": "grace.hermes"}
+    assert mcp_events[0]["actor"] == {"kind": "agent", "id": "grace.claude-code"}
 
 
 async def test_mcp_rejects_bad_token(app) -> None:  # type: ignore[no-untyped-def]

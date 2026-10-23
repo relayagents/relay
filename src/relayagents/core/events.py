@@ -36,7 +36,7 @@ Visibility = Literal["team", "public"]
 
 
 class Actor(BaseModel):
-    """Who caused the event. Agents are identified as ``<user_id>.<harness>`` (e.g. ``ada.hermes``)."""
+    """Who caused the event. Agents are identified as ``<user_id>.<harness>`` (e.g. ``ada.claude-code``)."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 

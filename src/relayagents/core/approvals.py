@@ -11,6 +11,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relayagents.core.events import Actor, ApprovalRequested, ApprovalResolved, Event, Provenance
@@ -83,10 +84,11 @@ async def request(
     thread_id: str | None = None,
     chat: ChatApp | None = None,
     provenance: Provenance | None = None,
+    now: datetime | None = None,
 ) -> ApprovalRow:
     details = redact(details or {})
     action = redact(action)
-    now = datetime.now(UTC)
+    now = now or datetime.now(UTC)
     approval_id = new_id("apr")
     expires = now + timedelta(seconds=ttl_s)
     event = Event.new(
@@ -102,6 +104,7 @@ async def request(
         source="api",
         thread_id=thread_id or approval_id,
         provenance=provenance,
+        ts=now,
     )
     await EventStore(session).append(event)
     row = ApprovalRow(
@@ -147,22 +150,60 @@ async def resolve(
     edited_action: str | None = None,
     note: str | None = None,
 ) -> ApprovalRow:
+    row, _ = await resolve_once(
+        session,
+        approval_id=approval_id,
+        decision=decision,
+        resolved_by=resolved_by,
+        edited_action=edited_action,
+        note=note,
+    )
+    return row
+
+
+async def resolve_once(
+    session: AsyncSession,
+    *,
+    approval_id: str,
+    decision: str,
+    resolved_by: str | None,
+    edited_action: str | None = None,
+    note: str | None = None,
+) -> tuple[ApprovalRow, bool]:
+    """Resolve a pending approval. Returns the row and whether *this* call resolved it.
+
+    The status flips with a conditional update, so of two concurrent clicks (or a click and a
+    retry) exactly one wins; callers act on the decision only when they won. A pending approval
+    past its expiry becomes ``expired`` instead of taking the decision.
+    """
     row = await session.get(ApprovalRow, approval_id)
     if row is None:
         raise KeyError(approval_id)
     if row.status != "pending":
-        return row
+        return row, False
     if resolved_by is not None and resolved_by != row.requested_of and decision != "expired":
         raise PermissionError(
             f"{resolved_by} cannot resolve an approval requested of {row.requested_of}"
         )
+    now = datetime.now(UTC)
+    if decision != "expired" and row.expires_at and now >= row.expires_at:
+        row, _ = await resolve_once(
+            session, approval_id=approval_id, decision="expired", resolved_by=None
+        )
+        return row, False
     edited_action = redact(edited_action) if edited_action else edited_action
     note = redact(note) if note else note
-    now = datetime.now(UTC)
-    row.status = decision
-    row.resolved_by = resolved_by
-    row.edited_action = edited_action
-    row.resolved_at = now
+    claimed = await session.execute(
+        update(ApprovalRow)
+        .where(ApprovalRow.id == approval_id, ApprovalRow.status == "pending")
+        .values(
+            status=decision, resolved_by=resolved_by, edited_action=edited_action, resolved_at=now
+        )
+        .execution_options(synchronize_session=False)
+    )
+    await session.refresh(row)
+    if not claimed.rowcount:
+        return row, False
     event = Event.new(
         ApprovalResolved(
             approval_id=approval_id,
@@ -178,7 +219,7 @@ async def resolve(
     )
     await EventStore(session).append(event)
     await session.flush()
-    return row
+    return row, True
 
 
 async def wait(

@@ -40,11 +40,11 @@ async def test_append_query_and_projections(services: Services) -> None:
         )
         e3 = Event.new(
             ReportPosted(text="cache table landed", item_id="item_1"),
-            actor=Actor.agent("grace.hermes"),
+            actor=Actor.agent("grace.claude-code"),
             source="api",
         )
         e4 = Event.new(
-            ActionItemClosed(item_id="item_1"), actor=Actor.agent("grace.hermes"), source="api"
+            ActionItemClosed(item_id="item_1"), actor=Actor.agent("grace.claude-code"), source="api"
         )
         for e in (e1, e2, e3, e4):
             await store.append(e)

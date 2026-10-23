@@ -10,7 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -72,9 +72,18 @@ class Settings(BaseSettings):
     slack_bot_token: str = ""
     slack_app_token: str = ""
     slack_team_channel: str = Field(default="", description="Channel id for summaries/digests.")
+    slack_buttons: bool = Field(
+        default=False,
+        description=(
+            "Set in services that post Slack buttons but do not hold the Socket Mode connection "
+            "(relay-workers). The clicks are handled by relay-api, which does."
+        ),
+    )
 
-    # Google Workspace via workspace-mcp (per-user OAuth handled by that service).
-    workspace_mcp_url: str = "http://workspace-mcp:8000/mcp"
+    # Google Workspace via workspace-mcp (per-user OAuth handled by that service). Empty means
+    # off: a default URL would build the connector, and report it configured, with nothing there.
+    # docker-compose.yml sets it only when GOOGLE_OAUTH_CLIENT_ID is set.
+    workspace_mcp_url: str = ""
 
     # Coding-agent sandbox image, advertised to user agents (they run it; Relay does not).
     sandbox_image: str = "ghcr.io/relayagents/relay-sandbox:latest"
@@ -96,6 +105,18 @@ class Settings(BaseSettings):
     def slack_socket_mode_enabled(self) -> bool:
         """Can receive button clicks over Socket Mode. API only; needs the app token too."""
         return bool(self.slack_bot_token and self.slack_app_token)
+
+    @property
+    def slack_buttons_enabled(self) -> bool:
+        """Messages this service posts may carry buttons: it holds the Socket Mode connection
+        itself (relay-api) or was told relay-api does (relay-workers, `RELAY_SLACK_BUTTONS`)."""
+        return bool(self.slack_bot_token and (self.slack_app_token or self.slack_buttons))
+
+    @field_validator("slack_buttons", mode="before")
+    @classmethod
+    def _empty_is_false(cls, v: object) -> object:
+        # compose passes `${SLACK_APP_TOKEN:+true}`, which is "" when there is no app token
+        return False if v == "" else v
 
 
 @lru_cache

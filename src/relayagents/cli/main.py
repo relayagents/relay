@@ -13,22 +13,30 @@ from typing import Annotated, Any
 import typer
 
 from relayagents import __version__
-from relayagents.cli.client import CONFIG_DIR, Credentials, RelayClient
+from relayagents.cli import agent_setup
+from relayagents.cli.client import CONFIG_DIR, Credentials, NotLoggedInError, RelayClient
 from relayagents.tools.cli import register_tool_commands
 
 app = typer.Typer(
     help="Relay: your team's shared memory and agent switchboard.",
     no_args_is_help=True,
     rich_markup_mode="markdown",
+    pretty_exceptions_show_locals=False,  # locals hold tokens; never print them in a traceback
 )
 meeting_app = typer.Typer(help="Meetings: upload audio or transcripts.")
-standup_app = typer.Typer(help="Standups on behalf of a teammate (used by the agent's cron).")
+standup_app = typer.Typer(
+    help="Standup drafts by hand; the workers draft and submit at your standup_time on their own."
+)
 app.add_typer(meeting_app, name="meeting")
 app.add_typer(standup_app, name="standup")
 
 
 def _client() -> RelayClient:
-    return RelayClient()
+    try:
+        return RelayClient()
+    except NotLoggedInError as exc:  # an expected state, not a crash: no traceback
+        typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
 
 
 def _echo_json(data: Any) -> None:
@@ -138,101 +146,133 @@ def me(
 
 # ---- setup-agent -------------------------------------------------------------------------------
 
-MCP_SNIPPETS = {
-    "claude-code": lambda url, token: {
-        "cmd": f'claude mcp add --transport http relay "{url}/mcp" --header "Authorization: Bearer {token}"',
-        "file": None,
-        "content": None,
-    },
-    "codex": lambda url, token: {
-        "cmd": None,
-        "file": "~/.codex/config.toml",
-        "content": f'[mcp_servers.relay]\nurl = "{url}/mcp"\nbearer_token_env_var = "RELAY_TOKEN"\n',
-    },
-    "opencode": lambda url, token: {
-        "cmd": None,
-        "file": "opencode.json",
-        "content": json.dumps(
-            {
-                "$schema": "https://opencode.ai/config.json",
-                "mcp": {
-                    "relay": {
-                        "type": "remote",
-                        "url": f"{url}/mcp",
-                        "enabled": True,
-                        "headers": {"Authorization": f"Bearer {token}"},
-                    }
-                },
-            },
-            indent=2,
-        ),
-    },
-    "hermes": lambda url, token: {
-        "cmd": None,
-        "file": "~/.hermes/config.yaml",
-        "content": f"mcp_servers:\n  relay:\n    url: {url}/mcp\n    headers:\n      Authorization: Bearer {token}\n",
-    },
-    "generic": lambda url, token: {
-        "cmd": None,
-        "file": None,
-        "content": json.dumps(
-            {
-                "mcpServers": {
-                    "relay": {
-                        "type": "http",
-                        "url": f"{url}/mcp",
-                        "headers": {"Authorization": f"Bearer {token}"},
-                    }
-                }
-            },
-            indent=2,
-        ),
-    },
-}
-
 
 @app.command("setup-agent")
 def setup_agent(
-    agent: Annotated[str, typer.Argument(help="claude-code | codex | opencode | hermes | generic")],
-    write: Annotated[
-        bool, typer.Option(help="Write the config file / run the command instead of printing.")
-    ] = False,
+    agent: Annotated[str, typer.Argument(help="claude-code | codex | opencode | cursor | generic")],
+    write: Annotated[bool, typer.Option(help="Apply the steps instead of printing them.")] = False,
     agent_token: Annotated[
         bool,
         typer.Option(
-            help="Mint a dedicated agent token (actor <you>.<agent>) instead of reusing your human token."
+            help="Mint a dedicated agent token (actor `<you>.<agent>`) instead of reusing your human token."
         ),
     ] = True,
+    project: Annotated[
+        Path | None,
+        typer.Option(
+            help="A folder in the project to connect; its git work tree is used (default: here).",
+            exists=True,
+            file_okay=False,
+        ),
+    ] = None,
+    env_file: Annotated[
+        Path | None,
+        typer.Option(
+            help="Codex, OpenCode, Cursor (required with --write): write the token's export line"
+            " into this file, a gitignored .envrc or your shell profile. A relative path is"
+            " relative to the project root.",
+            dir_okay=False,
+        ),
+    ] = None,
+    marketplace: Annotated[
+        str, typer.Option(help="Where Claude Code fetches the Relay plugin from.", hidden=True)
+    ] = agent_setup.MARKETPLACE_SOURCE,
 ) -> None:
-    """Point a coding agent or user agent at Relay's MCP server."""
-    if agent not in MCP_SNIPPETS:
+    """Connect a coding agent to Relay in this project only (claude-code, codex, opencode, cursor).
+
+    Relay stays off in your other projects. Run it from each project that should use Relay.
+    """
+    if agent not in agent_setup.AGENTS:
         typer.secho(
-            f"unknown agent {agent!r}; choose from {', '.join(MCP_SNIPPETS)}",
+            f"unknown agent {agent!r}; choose from {', '.join(agent_setup.AGENTS)}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+    if write and agent in agent_setup.TOKEN_ENV and env_file is None:
+        # The token goes into a file or nowhere: printed, it would land in an agent's transcript.
+        typer.secho(
+            f"error: {agent} reads its token from ${agent_setup.TOKEN_ENV[agent]}; pass --env-file"
+            " with the file that sets it (a gitignored .envrc, or your shell profile)",
             fg=typer.colors.RED,
             err=True,
         )
         raise typer.Exit(1)
     c = _client()
-    token = c.creds.token
-    if agent_token and agent != "generic":
-        token = c.post(
-            "/v1/tokens", {"label": f"agent:{agent}", "actor_kind": "agent", "harness": agent}
-        )["token"]
-    snippet = MCP_SNIPPETS[agent](c.creds.url, token)
-    if snippet["cmd"]:
-        typer.echo(snippet["cmd"] if not write else "running: " + snippet["cmd"])
-        if write:
-            os.system(snippet["cmd"])
-        return
-    typer.echo(f"# {snippet['file'] or 'MCP config'}\n{snippet['content']}")
-    if write and snippet["file"]:
-        path = Path(os.path.expanduser(snippet["file"]))
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a") as f:
-            f.write("\n" + snippet["content"])
-        typer.echo(f"appended to {path}")
-    if agent == "codex":
-        typer.echo(f"\nexport RELAY_TOKEN={token}")
+    root = agent_setup.project_root(project or Path.cwd())
+    mint = agent_token and agent != "generic"
+    if env_file is not None and not env_file.expanduser().is_absolute():
+        env_file = root / env_file  # like --project: relative to the project, not the cwd
+    label = agent_setup.token_label(agent, root, env_file)
+    minted: dict[str, Any] | None = None
+    try:
+        # Plan with a placeholder first, so a config we cannot merge fails before a token exists.
+        agent_setup.plan(
+            agent,
+            c.creds.url,
+            TOKEN_PLACEHOLDER,
+            root,
+            marketplace=marketplace,
+            env_file=env_file,
+        )
+        token = c.creds.token
+        if mint and write:
+            minted = c.post("/v1/tokens", {"label": label, "actor_kind": "agent", "harness": agent})
+            token = minted["token"]
+        elif mint:
+            token = TOKEN_PLACEHOLDER  # a preview changes nothing, on the server included
+        steps = agent_setup.plan(
+            agent, c.creds.url, token, root, marketplace=marketplace, env_file=env_file
+        ).steps
+        for step in steps:
+            typer.echo(agent_setup.describe(step))
+            if write:
+                agent_setup.apply(step)
+    except (agent_setup.SetupError, OSError) as exc:
+        if minted:
+            _revoke_tokens(c, [minted["token_id"]])  # nothing should hold a failed run's token
+        typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+    if minted:
+        # Setup is done and the new token is in use: a failure from here on must not undo it.
+        try:
+            tokens = c.get("/v1/tokens")
+        except Exception as exc:
+            typer.secho(
+                f"warning: connected, but could not list earlier tokens to revoke ({exc});"
+                " an earlier token for this project may still be live. Rerun setup-agent to"
+                " retire it.",
+                fg=typer.colors.YELLOW,
+                err=True,
+            )
+            return
+        previous = [
+            t["token_id"]
+            for t in tokens
+            if t["label"] == label and t["token_id"] != minted["token_id"] and not t["revoked_at"]
+        ]
+        if previous:
+            _revoke_tokens(c, previous)
+            typer.echo(f"Revoked {len(previous)} earlier token(s) for this project.")
+    if not write and agent != "generic":
+        typer.echo("\nNothing changed and no token was minted. Run again with --write to apply.")
+
+
+TOKEN_PLACEHOLDER = "<agent token, minted by --write>"
+
+
+def _revoke_tokens(c: RelayClient, token_ids: list[str]) -> None:
+    for token_id in token_ids:
+        try:
+            c.delete(f"/v1/tokens/{token_id}")
+        except Exception as exc:
+            # Nothing more to try from here; a successful rerun revokes every token with its label.
+            typer.secho(
+                f"warning: could not revoke token {token_id} ({exc}); it is still live. Rerun"
+                f" setup-agent here to retire it, or revoke it with DELETE /v1/tokens/{token_id}",
+                fg=typer.colors.YELLOW,
+                err=True,
+            )
 
 
 # ---- add-user (runs on the Relay node, talks to the DB directly) -------------------------------
@@ -247,32 +287,44 @@ def add_user(
     github_login: Annotated[str | None, typer.Option()] = None,
     timezone: Annotated[str, typer.Option()] = "UTC",
     admin: Annotated[bool, typer.Option("--admin", help="Make this user an admin")] = False,
-    no_container: Annotated[
-        bool, typer.Option("--no-container", help="Register only; do not start a Hermes container")
-    ] = False,
     reissue: Annotated[
-        bool, typer.Option("--reissue", help="Mint new tokens for an existing user")
+        bool, typer.Option("--reissue", help="Mint a new human token for an existing user")
     ] = False,
-    agents_dir: Annotated[
-        Path, typer.Option(help="Where per-user agent env files are written (host side)")
-    ] = Path("var/agents"),
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Print machine-readable JSON (used by scripts/add-user.sh)"),
     ] = False,
 ) -> None:
-    """Provision a teammate: user, tokens, AgentCard, and (with Docker on this machine) a Hermes container.
+    """Create a teammate: the user record and their human token. Runs on the Relay node.
 
-    Inside the relay-api container there is no Docker; run scripts/add-user.sh on the node instead.
+    Agents are not provisioned here. Each person connects their own coding agent per project
+    with `relay setup-agent`, which mints that agent's token (ADR-0010, ADR-0011).
     """
     from fastapi import HTTPException
+    from pydantic import ValidationError
 
     from relayagents.api.app import build_services
     from relayagents.api.routes.users import AddUserIn, create_user_with_tokens
-    from relayagents.connectors.hermes import HermesUserAgent
     from relayagents.core.config import get_settings
     from relayagents.core.events import Actor
 
+    try:
+        body = AddUserIn(
+            id=user_id,
+            display_name=name or user_id,
+            email=email,
+            slack_user_id=slack_user_id,
+            github_login=github_login,
+            timezone=timezone,
+            is_admin=admin,
+            reissue=reissue,
+        )
+    except ValidationError as exc:
+        for err in exc.errors():
+            typer.secho(
+                f"error: {err['msg'].removeprefix('Value error, ')}", fg=typer.colors.RED, err=True
+            )
+        raise typer.Exit(1) from exc
     settings = get_settings()
 
     async def run() -> None:
@@ -281,51 +333,26 @@ def add_user(
             await services.db.create_all()
         try:
             out = await create_user_with_tokens(
-                services,
-                AddUserIn(
-                    id=user_id,
-                    display_name=name or user_id,
-                    email=email,
-                    slack_user_id=slack_user_id,
-                    github_login=github_login,
-                    timezone=timezone,
-                    is_admin=admin,
-                    reissue=reissue,
-                ),
-                issued_by=Actor.system("relay.cli.admin"),
+                services, body, issued_by=Actor.system("relay.cli.admin")
             )
         except HTTPException as exc:
             typer.secho(f"error: {exc.detail}", fg=typer.colors.RED, err=True)
             raise typer.Exit(1) from exc
         finally:
             await services.db.dispose()
-        prov: dict[str, Any] = {"started": False}
-        if not no_container:
-            prov = await HermesUserAgent(agents_dir).provision(
-                user_id, relay_url=settings.public_url, relay_token=out.agent_token
-            )
         if json_output:
-            _echo_json({**out.model_dump(), "provision": prov})
+            _echo_json(out.model_dump())
             return
-        typer.echo(
-            f"user {out.user.id} {'updated' if reissue else 'created'}. Agent {out.agent_id} registered."
-        )
-        if no_container:
-            typer.echo(
-                "hermes: not started (--no-container). On the node: scripts/add-user.sh " + user_id
-            )
-        elif prov["started"]:
-            typer.echo(f"hermes: started {prov['container']} (credentials in {prov['env_file']})")
-        else:
-            typer.echo(f"hermes: {prov.get('hint')}\n  {prov.get('command')}")
+        typer.echo(f"user {out.user.id} {'updated' if reissue else 'created'}.")
         typer.echo(
             "\n== give this to the person (human token; used once by `relay login --token`) =="
         )
         typer.echo(out.human_token)
         typer.echo(
-            "\n== MCP config for their coding agent (or run `relay setup-agent <agent>` after login) =="
+            "\n== then, in each project that should use Relay, they run =="
+            "\n  relay setup-agent claude-code --write"
+            "\n  relay setup-agent <codex|opencode|cursor> --write --env-file <.envrc or profile>"
         )
-        typer.echo(MCP_SNIPPETS["generic"](out.relay_url, out.human_token)["content"])
 
     asyncio.run(run())
 

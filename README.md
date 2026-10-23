@@ -1,8 +1,8 @@
 # Relay
 
-**Relay connects your coding agent to your team's meetings and chat.** A meeting becomes decisions and action items with provenance. Each item reaches the assignee's own agent, which already knows what the team decided and what is assigned to its human. What the agent does flows back as reports, standups, and approvals the team sees in Slack. Nobody pastes context in either direction.
+**Relay connects your coding agent to your team's meetings and chat.** A meeting becomes decisions and action items with provenance. Each item reaches the assignee in Slack and in their own coding agent, which already knows what the team decided and what is assigned to its human. What the agent does flows back as reports, standups, and approvals the team sees in Slack. Nobody pastes context in either direction.
 
-Relay is the shared memory and switchboard *underneath* the agents people already use: Claude Code, Codex, OpenCode, Hermes, or anything that speaks MCP and A2A. It is **not** an agent framework. It runs no model calls on your behalf, holds no private memory, and asks your agent for anything that needs your credentials. It is also not a replacement for Slackbot, Claude in Slack, or Codex in Slack; those are executors, Relay is the record and the broker beneath them, and it works on a free or Pro Slack plan ([ADR-0009](docs/adr/0009-relay-under-vendor-agents.md)).
+Relay is the shared memory and switchboard *underneath* the agents people already use: Claude Code, Codex, OpenCode, Cursor, or anything that speaks MCP. It is **not** an agent framework. It runs no model calls on your behalf, holds no private memory, and asks your agent for anything that needs your credentials. It is also not a replacement for Slackbot, Claude in Slack, or Codex in Slack; those are executors, Relay is the record and the broker beneath them, and it works on a free or Pro Slack plan ([ADR-0009](docs/adr/0009-relay-under-vendor-agents.md)).
 
 ## 60-second quickstart
 
@@ -13,8 +13,8 @@ $EDITOR .env                      # hostname, Slack tokens, team model key (opti
 ./scripts/bootstrap.sh            # docker compose up -d --build, waits for /health, creates the admin
 uv tool install git+https://github.com/relayagents/relay   # the `relay` CLI on your laptop (PyPI release pending)
 relay login --url https://relay.example.dev --token <printed above>
-scripts/add-user.sh grace         # on the node: user, tokens, AgentCard, and a Hermes container
-relay setup-agent claude-code     # points your coding agent at Relay's MCP server
+scripts/add-user.sh grace         # on the node: user record and human token
+(cd ~/code/team-repo && relay setup-agent claude-code --write)   # your coding agent, in that project only
 relay meeting upload --transcript fixtures/transcript_sample.json --skip-asr --participants ada,grace,linus
 relay my-items                    # ...and `relay recall "embedding cache"`, `relay decisions`
 ```
@@ -35,11 +35,6 @@ flowchart LR
     PG[("Postgres + pgvector<br/>event log = truth,<br/>projections, embeddings")]
     R[("Redis / arq")]
     WS["workspace-mcp<br/>per-user Google OAuth"]
-    subgraph pool["Agent pool"]
-      H1["Hermes · ada"]
-      H2["Hermes · grace"]
-      SB["sandbox: claude -p / codex exec"]
-    end
     CADDY["caddy (TLS)"]
   end
   GPU["relay-ingest (WhisperX)<br/>GPU box on the tailnet, or CPU fallback"]
@@ -53,14 +48,43 @@ flowchart LR
   W <--> PG
   W <--> R
   GPU <--> R
-  API <-->|A2A via broker| H1
-  API <-->|A2A via broker| H2
-  H1 -->|headless run| SB
-  SB -->|MCP: my_items, report| API
   API <-->|Socket Mode| SLACK
-  H1 -->|gh, user token| GH
-  H1 -->|MCP| WS
+  W -->|summaries, DMs, standups, digest| SLACK
+  API -->|MCP client| WS
+  CC -.->|MCP, optional| WS
+  CC -->|gh, user token| GH
 ```
+
+## Connecting a coding agent
+
+Relay is on per project, never everywhere: your personal projects stay out of the team's log.
+The easy way is to let your agent do it. Open it in the project and say:
+
+> Connect this project to Relay by following https://github.com/relayagents/relay/blob/main/docs/connect-your-agent.md
+
+It installs the CLI, logs you in (you approve in Slack), and connects that project. By hand, from
+the root of a project that should use Relay, after `relay login`:
+
+```bash
+relay setup-agent claude-code --write
+relay setup-agent codex --write --env-file .envrc   # or opencode, cursor; or --env-file ~/.zshrc
+```
+
+- **Claude Code** gets the Relay plugin (it carries the `relay` skill) and the MCP server, both at
+  local scope: private to you and to this folder. The plugin comes from this repository's
+  marketplace (`relay@relayagents`).
+- **Codex**, **OpenCode**, and **Cursor** get a project config (`.codex/config.toml`,
+  `opencode.json`, `.cursor/mcp.json`) that reads the token from `RELAY_CODEX_TOKEN` /
+  `RELAY_OPENCODE_TOKEN` / `RELAY_CURSOR_TOKEN`, so the file holds no secret, and the skill in
+  `~/.agents/skills/relay`. The skill does nothing in projects where Relay is not connected.
+  `--env-file` names the file that gets the token's `export` line: a gitignored `.envrc` (with
+  direnv) or your shell profile. Files git would track are refused.
+- Without `--write` it prints the steps and changes nothing. Run it again to replace this
+  project's token; the one it replaces is revoked. It never prints a token, so it is safe for
+  your agent to run.
+
+The skill tells the agent when to report, when to ask for approval, and never to fall back to your
+own `relay` login. Why it works this way: [ADR-0010](docs/adr/0010-coding-agents-opt-in-per-project.md).
 
 ## The tool surface
 
@@ -72,7 +96,7 @@ The same nine operations exist as MCP tools, `relay` subcommands, and `POST /v1/
 | `my_items` / `items --assignee` | open action items, with source meeting and status |
 | `events --since --type --thread` | query the event log |
 | `report <text> [--item-id ID] [--link URL]` | publish what I did as an event (source for standups and item closure) |
-| `ask <user> <question>` | A2A message to a teammate's agent, threaded, surfaced to that human in Slack |
+| `ask <user> <question>` | Question to a teammate, threaded: they are told in Slack, and their agent gets it over A2A if they have one |
 | `request_approval <action>` | open an approval; blocks until the human resolves it in Slack |
 | `decisions --topic` | decisions with dates and superseded-by links |
 | `post <text>` | post to Slack via Relay's app with "posted by X's agent" attribution |
@@ -101,12 +125,12 @@ The same nine operations exist as MCP tools, `relay` subcommands, and `POST /v1/
 - Live meeting bots (v1 accepts recordings and transcripts; live capture is v2).
 - Microsoft 365 (the `OfficeSuite` protocol is there; Google Workspace is the reference).
 - Multi-tenant hosting. One node is one team.
-- Running Relay's own agents. Relay's PM function has no credentials and asks your agent instead.
+- Running agents of its own, per user or as a hub. Relay routes items and asks to people in Slack, and each person's coding agent reaches Relay from their own projects ([ADR-0011](docs/adr/0011-session-agents-and-pr-watcher.md)).
 - A knowledge graph, by default (see above).
 
 ## Status
 
-Pre-alpha. Both vertical slices (meeting → action → code, and daily updates on behalf of each teammate) are wired end to end and covered by about a hundred tests on SQLite; the compose stack targets Postgres + pgvector and has been validated by CI but not yet booted for real. The Hermes image needs alignment before that first boot; see the [roadmap](docs/roadmap.md).
+Pre-alpha. Both vertical slices (meeting → action → code, and daily updates on behalf of each teammate) are wired end to end and covered by over two hundred tests on SQLite; the compose stack targets Postgres + pgvector and has been validated by CI but not yet booted for real. There is no per-user agent to boot any more ([ADR-0011](docs/adr/0011-session-agents-and-pr-watcher.md)); the first real boot is the next milestone, see the [roadmap](docs/roadmap.md).
 
 ## Contributing
 

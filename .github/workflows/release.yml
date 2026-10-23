@@ -15,7 +15,6 @@ jobs:
         include:
           - { name: relay, file: deploy/docker/relay/Dockerfile }
           - { name: relay-ingest, file: deploy/docker/ingest/Dockerfile }
-          - { name: relay-hermes, file: deploy/docker/hermes/Dockerfile }
           - { name: relay-sandbox, file: deploy/docker/sandbox/Dockerfile }
     steps:
       - uses: actions/checkout@v4

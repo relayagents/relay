@@ -5,14 +5,14 @@ from __future__ import annotations
 import contextlib
 import secrets
 from datetime import UTC, datetime, timedelta
+from functools import lru_cache
 from typing import Annotated, Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 from sqlalchemy import select
 
-from relayagents.api.a2a_broker import broker
-from relayagents.api.a2a_broker.types import default_agent_card
 from relayagents.api.auth import (
     DEFAULT_SCOPES,
     admin_principal,
@@ -28,6 +28,31 @@ from relayagents.core.store import EventStore
 from relayagents.tools.context import Principal, Services
 
 router = APIRouter(prefix="/v1", tags=["users"])
+
+
+# Keys zoneinfo can load from the host's tz directory that are not IANA names: they depend on
+# the machine, so a value valid where it was written could mean something else on the node.
+NOT_IANA = frozenset({"localtime", "posixrules", "Factory"})
+
+
+@lru_cache(maxsize=1)
+def _iana_zones() -> frozenset[str]:
+    """Read once: listing the zones walks the tz directory, too slow for every request."""
+    return frozenset(available_timezones()) - NOT_IANA
+
+
+def _known_timezone(tz: str) -> str:
+    """The standup scheduler reads this every minute; refuse anything but an IANA name."""
+    try:
+        ok = tz in _iana_zones() and ZoneInfo(tz) is not None
+    except (ZoneInfoNotFoundError, ValueError):
+        ok = False
+    if not ok:
+        raise ValueError(f"unknown timezone {tz!r}; use an IANA name such as Europe/Paris")
+    return tz
+
+
+Timezone = Annotated[str, AfterValidator(_known_timezone)]
 
 
 class UserOut(BaseModel):
@@ -78,8 +103,8 @@ async def me(
 
 class UserSettingsIn(BaseModel):
     standup_mode: str | None = Field(default=None, pattern="^(draft|auto|off)$")
-    standup_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
-    timezone: str | None = None
+    standup_time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    timezone: Timezone | None = None
     slack_user_id: str | None = None
     github_login: str | None = None
 
@@ -141,20 +166,17 @@ class AddUserIn(BaseModel):
     email: str | None = None
     slack_user_id: str | None = None
     github_login: str | None = None
-    timezone: str = "UTC"
-    harness: str = Field(default="hermes", pattern=r"^[a-z][a-z0-9_-]{1,31}$")
+    timezone: Timezone = "UTC"
     is_admin: bool = False
     reissue: bool = Field(
         default=False,
-        description="Mint fresh tokens for an existing user (logged as token.issued).",
+        description="Mint a fresh human token for an existing user (logged as token.issued).",
     )
 
 
 class AddUserOut(BaseModel):
     user: UserOut
     human_token: str
-    agent_id: str
-    agent_token: str
     relay_url: str
 
 
@@ -165,7 +187,8 @@ async def create_user_with_tokens(
     issued_by: Actor,
     scopes: tuple[str, ...] = DEFAULT_SCOPES,
 ) -> AddUserOut:
-    """Shared by the admin REST route and `relay add-user` (which runs on the node).
+    """Shared by the admin REST route and `relay add-user` (which runs on the node). Mints the
+    human token only; agents get theirs from `relay setup-agent` (ADR-0011).
 
     The REST route passes the admin token's scopes so a narrowed token cannot mint broader ones.
     """
@@ -176,7 +199,7 @@ async def create_user_with_tokens(
         user = await session.get(UserRow, body.id)
         if user is not None and not body.reissue:
             raise HTTPException(
-                409, f"user {body.id!r} already exists; pass reissue=true to mint new tokens"
+                409, f"user {body.id!r} already exists; pass reissue=true to mint a new token"
             )
         if body.slack_user_id:
             clash = await session.scalar(
@@ -228,35 +251,9 @@ async def create_user_with_tokens(
             issued_via=via,
             scopes=scopes,
         )  # type: ignore[arg-type]
-        agent_id = f"{user.id}.{body.harness}"
-        agent_token, _ = await mint_token(
-            session,
-            user_id=user.id,
-            actor=Actor.agent(agent_id),
-            label=f"agent:{body.harness}",
-            settings=services.settings,
-            issued_by=issued_by,
-            issued_via=via,
-            scopes=scopes,
-        )  # type: ignore[arg-type]
-        card = default_agent_card(
-            agent_id, user.display_name, services.settings.public_url, body.harness
-        )
-        await broker.register_agent(
-            session,
-            agent_id=agent_id,
-            user_id=user.id,
-            harness=body.harness,
-            card=card,
-            by=issued_by,
-        )
         await session.commit()
         return AddUserOut(
-            user=_user_out(user),
-            human_token=human_token,
-            agent_id=agent_id,
-            agent_token=agent_token,
-            relay_url=services.settings.public_url,
+            user=_user_out(user), human_token=human_token, relay_url=services.settings.public_url
         )
 
 

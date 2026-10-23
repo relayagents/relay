@@ -2,7 +2,7 @@
 
 * Tokens are opaque: ``rly_<ulid-ish random>``. Only a SHA-256 (with optional pepper) is stored.
 * Each token belongs to a user and acts as one actor: the human (``ada``) or one of their
-  agents (``ada.hermes``, ``ada.claude-code``). Every event records that actor.
+  agents (``ada.claude-code``, ``ada.codex``). Every event records that actor.
 * The same verifier serves REST (``Authorization: Bearer``) and the MCP server (OAuth 2.1
   bearer, via :class:`RelayTokenVerifier`).
 """

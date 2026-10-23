@@ -123,11 +123,21 @@ class AskInput(ToolInput):
 
 
 class AskOutput(ToolOutput):
-    task_id: str
+    task_id: str | None = Field(
+        default=None, description="A2A task id when the teammate has a registered agent."
+    )
     thread_id: str
     question_id: str
-    to_agent: str
-    state: str
+    to_agent: str | None = Field(
+        default=None, description="The agent that also received the question, if any."
+    )
+    state: str = Field(
+        description="A2A task state, or 'human_only' when no agent exists and only the person is told."
+    )
+    notified: bool = Field(
+        default=False,
+        description="Whether the person was reached in Slack. With no agent and no DM, nobody was told; the question is still recorded.",
+    )
     answer: str | None = None
 
 

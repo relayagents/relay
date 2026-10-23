@@ -125,7 +125,10 @@ async def test_extract_meeting_job_end_to_end(services: Services, team) -> None:
     result = await extract_meeting({"services": services}, "mtg_e2e")
     assert len(result["events"]) == 5
     assert result["dispatch"]["summary_posted"] is True
-    assert sorted(t["to"] for t in result["dispatch"]["tasks"]) == ["grace.hermes", "linus.hermes"]
+    assert sorted(t["to"] for t in result["dispatch"]["tasks"]) == [
+        "grace.claude-code",
+        "linus.claude-code",
+    ]
 
     async with services.db.session() as session:
         store = EventStore(session)
@@ -133,7 +136,7 @@ async def test_extract_meeting_job_end_to_end(services: Services, team) -> None:
         assert len(segs) == 10
         meeting = await session.get(MeetingRow, "mtg_e2e")
         assert meeting is not None and meeting.status == "done"
-        inbox = await broker.inbox(session, "grace.hermes")
+        inbox = await broker.inbox(session, "grace.claude-code")
         assert len(inbox) == 1 and "add the embedding cache table" in inbox[0].history[0].text
     chat = services.chat
     assert any("Retrieval sync" in p["text"] for p in chat.posts)  # type: ignore[union-attr]

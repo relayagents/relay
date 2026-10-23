@@ -39,7 +39,9 @@ chat; and any of it on a free or Pro Slack plan.
    For the lab this means Claude Tag and Claude Code in Slack on the Claude Team plan it already
    has; Claude Team supports custom connectors (remote MCP), which is how Relay's server is added
    (to verify at first boot). Relay's own per-user agent (Hermes) and sandbox remain the reference
-   path for people without a vendor seat or using open models. The A2A broker stays for agents
+   path for people without a vendor seat or using open models. *(Superseded by
+   [ADR-0011](0011-session-agents-and-pr-watcher.md): there is no per-user Relay agent; the laptop
+   coding agent is the reference path.)* The A2A broker stays for agents
    that can be addressed directly; Slack threads are the transport for vendor agents.
 3. **Vendor meeting notes are an ingest source.** Slackbot recaps, Gemini Meet notes, and Zoom
    summaries enter the same extraction path as a transcript. WhisperX stays for recordings that
