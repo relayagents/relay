@@ -24,7 +24,9 @@ app = typer.Typer(
     pretty_exceptions_show_locals=False,  # locals hold tokens; never print them in a traceback
 )
 meeting_app = typer.Typer(help="Meetings: upload audio or transcripts.")
-standup_app = typer.Typer(help="Standups on behalf of a teammate (used by the agent's cron).")
+standup_app = typer.Typer(
+    help="Standup drafts by hand; the workers draft and submit at your standup_time on their own."
+)
 app.add_typer(meeting_app, name="meeting")
 app.add_typer(standup_app, name="standup")
 

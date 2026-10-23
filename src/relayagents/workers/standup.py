@@ -17,8 +17,11 @@ import contextlib
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import structlog
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relayagents.core import approvals
@@ -26,6 +29,7 @@ from relayagents.core.events import (
     ActionItemClosed,
     ActionItemUpdated,
     Actor,
+    ApprovalRequested,
     Event,
     Provenance,
     ReportPosted,
@@ -38,6 +42,9 @@ from relayagents.core.store import EventStore
 from relayagents.tools.context import Services
 
 DRAFT_TTL_S = 12 * 3600
+
+log = structlog.get_logger()
+SCHEDULER = Actor.system("relay.standup")
 
 
 class StandupDraft(BaseModel):
@@ -98,9 +105,7 @@ def draft_blocks(draft: StandupDraft, *, approval_id: str | None = None) -> list
         ]
     )
     if draft.questions:
-        text += "\n*Open questions from your agent*\n" + "\n".join(
-            f"• {q}" for q in draft.questions
-        )
+        text += "\n*Open questions*\n" + "\n".join(f"• {q}" for q in draft.questions)
     payload = json.dumps({**draft.model_dump(), "approval_id": approval_id})
     return [
         {
@@ -183,6 +188,62 @@ async def submit(services: Services, draft: StandupDraft, *, actor: Actor) -> di
         return {"mode": "draft", "posted": False, "approval_id": row.id, "event_id": row.event_id}
 
 
+def local_now(user: UserRow, now: datetime) -> datetime:
+    try:
+        tz = ZoneInfo(user.timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        log.warning("standup.bad_timezone", user=user.id, timezone=user.timezone)
+        tz = UTC  # type: ignore[assignment]
+    return now.astimezone(tz)
+
+
+def is_due(user: UserRow, now: datetime) -> bool:
+    return (
+        user.standup_mode != "off" and local_now(user, now).strftime("%H:%M") == user.standup_time
+    )
+
+
+async def ran_today(session: AsyncSession, user_id: str, now: datetime) -> bool:
+    """True once a standup was posted or a draft offered for this user since the start of `now`'s
+    UTC day, so a worker restarting inside the due minute cannot send a second one."""
+    start = now.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    events = await EventStore(session).query(
+        types=["standup.posted", "approval.requested"], since=start, limit=1000
+    )
+    for e in events:
+        p = e.payload
+        if isinstance(p, StandupPosted) and p.user_id == user_id:
+            return True
+        if (
+            isinstance(p, ApprovalRequested)
+            and p.action_type == "standup.post.draft"
+            and p.requested_of == user_id
+        ):
+            return True
+    return False
+
+
+async def run_due_standups(services: Services, *, now: datetime | None = None) -> list[str]:
+    """Called every minute by the workers: draft and submit for each user whose time has come.
+    Returns the users whose standup went out; one user's failure does not stop the others."""
+    now = now or datetime.now(UTC)
+    drafts: list[StandupDraft] = []
+    async with services.db.session() as session:
+        users = (await session.scalars(select(UserRow).where(UserRow.standup_mode != "off"))).all()
+        for user in users:
+            if is_due(user, now) and not await ran_today(session, user.id, now):
+                drafts.append(await gather(session, user.id, now=now))
+    done: list[str] = []
+    for draft in drafts:
+        try:
+            await submit(services, draft, actor=SCHEDULER)
+        except Exception:
+            log.exception("standup.scheduled_failed", user=draft.user_id)
+            continue
+        done.append(draft.user_id)
+    return done
+
+
 async def _post(
     services: Services,
     session: AsyncSession,
@@ -198,9 +259,13 @@ async def _post(
         ref = await services.chat.post(
             channel,
             render_standup(draft, user.display_name),
-            attribution=f"posted by {user.display_name}'s agent"
-            if mode == "auto"
-            else f"approved by {user.display_name}",
+            attribution=(
+                f"posted by Relay for {user.display_name}"
+                if mode == "auto" and actor.kind == "system"
+                else f"posted by {user.display_name}'s agent"
+                if mode == "auto"
+                else f"approved by {user.display_name}"
+            ),
         )
     ev = Event.new(
         StandupPosted(

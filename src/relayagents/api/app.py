@@ -38,9 +38,10 @@ def build_services(
     if settings.slack_enabled:
         from relayagents.connectors.slack import SlackChatApp
 
-        # Buttons only work when the API holds the Socket Mode connection (app token).
+        # Buttons only work when relay-api holds the Socket Mode connection (app token); the
+        # workers post them too, and relay-api's connection handles the clicks.
         services.chat = SlackChatApp(
-            settings.slack_bot_token, db, supports_actions=settings.slack_socket_mode_enabled
+            settings.slack_bot_token, db, supports_actions=settings.slack_buttons_enabled
         )
     if settings.workspace_mcp_url:
         from relayagents.connectors.workspace import WorkspaceMCP
