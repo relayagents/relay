@@ -6,7 +6,7 @@ import contextlib
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import AfterValidator, BaseModel, Field
@@ -29,12 +29,19 @@ from relayagents.tools.context import Principal, Services
 router = APIRouter(prefix="/v1", tags=["users"])
 
 
+# Keys zoneinfo can load from the host's tz directory that are not IANA names: they depend on
+# the machine, so a value valid where it was written could mean something else on the node.
+NOT_IANA = frozenset({"localtime", "posixrules", "Factory"})
+
+
 def _known_timezone(tz: str) -> str:
-    """The standup scheduler reads this every minute; refuse a name it cannot resolve."""
+    """The standup scheduler reads this every minute; refuse anything but an IANA name."""
     try:
-        ZoneInfo(tz)
-    except (ZoneInfoNotFoundError, ValueError) as exc:
-        raise ValueError(f"unknown timezone {tz!r}; use an IANA name such as Europe/Paris") from exc
+        ok = tz not in NOT_IANA and tz in available_timezones() and ZoneInfo(tz) is not None
+    except (ZoneInfoNotFoundError, ValueError):
+        ok = False
+    if not ok:
+        raise ValueError(f"unknown timezone {tz!r}; use an IANA name such as Europe/Paris")
     return tz
 
 
