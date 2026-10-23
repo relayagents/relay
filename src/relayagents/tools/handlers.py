@@ -24,6 +24,7 @@ from relayagents.core.events import (
 )
 from relayagents.core.ids import new_id
 from relayagents.core.indexing import index_later
+from relayagents.core.models import UserRow
 from relayagents.core.permissions import is_forbidden, policy_for
 from relayagents.core.projections import apply as project
 from relayagents.core.projections import list_decisions, list_items
@@ -191,29 +192,30 @@ def _source_for(ctx: ToolContext):  # type: ignore[no-untyped-def]
 
 
 async def ask(ctx: ToolContext, inp: AskInput) -> AskOutput:
+    """Tell a teammate in Slack; also hand the question to their agent when one is registered."""
     target_user = ctx.resolve_user(inp.user)
     assert target_user is not None
     async with ctx.db.session() as session:
+        if await session.get(UserRow, target_user) is None:
+            raise ToolError(f"unknown user {target_user!r}")
         agent = await broker.agent_for_user(session, target_user)
-        if agent is None:
-            raise ToolError(
-                f"no agent registered for user {target_user!r}; they need to run `relay add-user` / `relay setup-agent`"
-            )
         question_id = new_id("q")
         thread_id = inp.thread_id or new_id("thr")
-        msg = Message.from_text(
-            inp.question,
-            context_id=thread_id,
-            metadata={"question_id": question_id, "from_user": ctx.user_id},
-        )
-        task = await broker.send_message(
-            session,
-            from_actor=ctx.actor,
-            to_agent=agent.id,
-            message=msg,
-            metadata={"question_id": question_id},
-            surfaced_to=[target_user],
-        )
+        task = None
+        if agent is not None:
+            msg = Message.from_text(
+                inp.question,
+                context_id=thread_id,
+                metadata={"question_id": question_id, "from_user": ctx.user_id},
+            )
+            task = await broker.send_message(
+                session,
+                from_actor=ctx.actor,
+                to_agent=agent.id,
+                message=msg,
+                metadata={"question_id": question_id},
+                surfaced_to=[target_user],
+            )
         q = Event.new(
             QuestionOpened(question_id=question_id, text=inp.question, asked_of=target_user),
             actor=ctx.actor,
@@ -225,24 +227,25 @@ async def ask(ctx: ToolContext, inp: AskInput) -> AskOutput:
         await session.commit()
     await index_later(ctx.services, [q])
     if ctx.services.chat is not None:
+        verb = "asked your agent" if task is not None else "asked you"
         with contextlib.suppress(Exception):
             await ctx.services.chat.dm(
                 target_user,
-                f":speech_balloon: `{ctx.actor.id}` asked your agent (thread `{thread_id}`):\n> {inp.question}",
+                f":speech_balloon: `{ctx.actor.id}` {verb} (thread `{thread_id}`):\n> {inp.question}",
             )
     answer = None
-    state = task.status.state
-    if inp.wait_s:
+    state = task.status.state if task is not None else "human_only"
+    if task is not None and inp.wait_s:
         done = await broker.wait_for_terminal(ctx.db.sessions, task.id, timeout_s=inp.wait_s)
         if done is not None:
             state = done.status.state
             if done.history and done.history[-1].role == "agent":
                 answer = done.history[-1].text
     return AskOutput(
-        task_id=task.id,
+        task_id=task.id if task is not None else None,
         thread_id=thread_id,
         question_id=question_id,
-        to_agent=agent.id,
+        to_agent=agent.id if agent is not None else None,
         state=state,
         answer=answer,
     )

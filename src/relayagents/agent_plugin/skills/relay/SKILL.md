@@ -49,7 +49,7 @@ own initiative.
 | `decisions` | get decisions on a topic, with what superseded what |
 | `events` | see what happened recently (`since: "24h"`, `actor: "me"`) |
 | `report` | publish a finished piece of work (below) |
-| `ask` | put a question to a teammate's agent; the teammate is told in Slack |
+| `ask` | put a question to a teammate; they are told in Slack, and their agent gets it too if they have one |
 | `request_approval` | get your human's approval in Slack for an external write (below) |
 | `post` | post to the team channel as "<human>'s agent", only when your human asks |
 
