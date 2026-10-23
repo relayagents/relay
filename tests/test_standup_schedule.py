@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+from sqlalchemy import select
 
+from relayagents.api.routes.users import AddUserIn, create_user_with_tokens
 from relayagents.core.config import Settings
-from relayagents.core.models import UserRow
+from relayagents.core.events import Actor, Event, StandupPosted
+from relayagents.core.models import ApprovalRow, UserRow
+from relayagents.core.store import EventStore
 from relayagents.tools.context import Services
 from relayagents.workers.standup import run_due_standups
+from tests.conftest import auth
 
-# A fixed day in the past: events are stamped with the real clock, so "already ran today" must
-# hold however far the real date has moved on from the scheduler's `now`.
+# A fixed day, not today: the scheduler stamps what it records with its own `now`, so these tests
+# do not depend on the real clock.
 DAY = datetime(2026, 6, 15, tzinfo=UTC)
 
 
@@ -121,3 +126,88 @@ def test_draft_questions_are_relays_not_the_agents() -> None:
     draft = StandupDraft(user_id="grace", questions=["Still working on 'x' (item_1)?"])
     text = draft_blocks(draft)[0]["text"]["text"]
     assert "*Open questions*" in text and "from your agent" not in text
+
+
+async def test_a_late_run_catches_up_within_two_hours(services: Services, team) -> None:  # type: ignore[no-untyped-def]
+    # a busy or restarting worker runs the 09:00 tick at 09:05: ada and linus still get theirs
+    await _set(services, "grace", standup_time="06:30")  # 2h35 ago: too late, skipped today
+    assert set(await run_due_standups(services, now=DAY.replace(hour=9, minute=5))) == {
+        "ada",
+        "linus",
+    }
+    assert await run_due_standups(services, now=DAY.replace(hour=10, minute=59)) == []
+
+
+async def test_an_evening_approval_does_not_suppress_the_next_local_day(  # type: ignore[no-untyped-def]
+    services: Services, team
+) -> None:
+    await _set(services, "grace", timezone="America/Los_Angeles")  # 09:00 PDT is 16:00 UTC
+    assert await run_due_standups(services, now=DAY.replace(hour=16)) == ["grace"]
+    # she approves at 17:30 PDT, which is already the next day in UTC
+    next_utc_day = DAY + timedelta(days=1)
+    async with services.db.session() as session:
+        await EventStore(session).append(
+            Event.new(
+                StandupPosted(user_id="grace", mode="draft"),
+                actor=Actor.human("grace"),
+                source="slack",
+                thread_id=f"standup:grace:{next_utc_day:%Y-%m-%d}",
+                ts=next_utc_day.replace(hour=0, minute=30),
+            )
+        )
+        await session.commit()
+    assert await run_due_standups(services, now=next_utc_day.replace(hour=16)) == ["grace"]
+
+
+async def test_a_standup_time_in_the_spring_forward_gap_still_runs(
+    services: Services, team
+) -> None:  # type: ignore[no-untyped-def]
+    # 02:30 does not exist in New York on 2026-03-08; 07:00 UTC is 03:00 EDT
+    await _set(services, "grace", timezone="America/New_York", standup_time="02:30")
+    at = datetime(2026, 3, 8, 7, 0, tzinfo=UTC)
+    assert await run_due_standups(services, now=at) == ["grace"]
+
+
+async def test_draft_mode_needs_someone_to_dm(services: Services, team) -> None:  # type: ignore[no-untyped-def]
+    await create_user_with_tokens(
+        services, AddUserIn(id="nora", display_name="Nora"), issued_by=Actor.system("relay.test")
+    )
+    at = DAY.replace(hour=9)
+    assert "nora" not in await run_due_standups(services, now=at)  # no Slack id: nothing opened
+    await _set(services, "linus", standup_mode="auto")
+    services.chat = None  # no Slack at all: drafts would reach nobody; auto still records
+    assert await run_due_standups(services, now=at + timedelta(days=1)) == ["linus"]
+    async with services.db.session() as session:
+        offered = (await session.scalars(select(ApprovalRow.requested_of))).all()
+    assert "nora" not in offered and offered.count("ada") == 1
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{"timezone": "Mars/Olympus"}, {"timezone": "America/NewYork"}, {"standup_time": "25:00"}],
+)
+async def test_bad_schedule_settings_are_refused_on_write(client, team, body) -> None:  # type: ignore[no-untyped-def]
+    r = await client.patch("/v1/me", json=body, headers=auth(team["grace"]["human"]))
+    assert r.status_code == 422, r.text
+    r = await client.post(
+        "/v1/users",
+        json={"id": "mallory", "display_name": "M", "timezone": "Mars/Olympus"},
+        headers=auth(team["ada"]["human"]),
+    )
+    assert r.status_code == 422, r.text
+    ok = await client.patch(
+        "/v1/me",
+        json={"timezone": "Europe/Paris", "standup_time": "23:59"},
+        headers=auth(team["grace"]["human"]),
+    )
+    assert ok.status_code == 200, ok.text
+
+
+def test_add_user_cli_refuses_an_unknown_timezone_cleanly() -> None:
+    from typer.testing import CliRunner
+
+    from relayagents.cli import main
+
+    result = CliRunner().invoke(main.app, ["add-user", "nora", "--timezone", "Mars/Olympus"])
+    assert result.exit_code == 1 and "unknown timezone 'Mars/Olympus'" in result.output
+    assert "Traceback" not in result.output

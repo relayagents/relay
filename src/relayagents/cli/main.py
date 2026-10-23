@@ -301,12 +301,30 @@ def add_user(
     with `relay setup-agent`, which mints that agent's token (ADR-0010, ADR-0011).
     """
     from fastapi import HTTPException
+    from pydantic import ValidationError
 
     from relayagents.api.app import build_services
     from relayagents.api.routes.users import AddUserIn, create_user_with_tokens
     from relayagents.core.config import get_settings
     from relayagents.core.events import Actor
 
+    try:
+        body = AddUserIn(
+            id=user_id,
+            display_name=name or user_id,
+            email=email,
+            slack_user_id=slack_user_id,
+            github_login=github_login,
+            timezone=timezone,
+            is_admin=admin,
+            reissue=reissue,
+        )
+    except ValidationError as exc:
+        for err in exc.errors():
+            typer.secho(
+                f"error: {err['msg'].removeprefix('Value error, ')}", fg=typer.colors.RED, err=True
+            )
+        raise typer.Exit(1) from exc
     settings = get_settings()
 
     async def run() -> None:
@@ -315,18 +333,7 @@ def add_user(
             await services.db.create_all()
         try:
             out = await create_user_with_tokens(
-                services,
-                AddUserIn(
-                    id=user_id,
-                    display_name=name or user_id,
-                    email=email,
-                    slack_user_id=slack_user_id,
-                    github_login=github_login,
-                    timezone=timezone,
-                    is_admin=admin,
-                    reissue=reissue,
-                ),
-                issued_by=Actor.system("relay.cli.admin"),
+                services, body, issued_by=Actor.system("relay.cli.admin")
             )
         except HTTPException as exc:
             typer.secho(f"error: {exc.detail}", fg=typer.colors.RED, err=True)
