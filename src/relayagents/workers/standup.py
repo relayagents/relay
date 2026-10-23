@@ -332,7 +332,7 @@ async def _post(
         ),
         actor=actor,
         source="slack",
-        thread_id=f"standup:{user.id}:{now:%Y-%m-%d}",
+        thread_id=f"standup:{user.id}:{local_now(user, now):%Y-%m-%d}",  # the user's own day
         ts=now,
         provenance=Provenance(parent_event_ids=list(draft.cited_event_ids)),
     )

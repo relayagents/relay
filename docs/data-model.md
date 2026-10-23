@@ -12,7 +12,7 @@ Every fact in Relay is an append-only `Event` (`src/relayagents/core/events.py`)
 | `actor` | `{kind: human \| agent \| system, id}` | agents are `<user>.<harness>`; `Actor.user_id` gives the owning human |
 | `source` | `meeting \| slack \| workspace \| github \| a2a \| cli \| api` | where it entered Relay |
 | `visibility` | `team \| public` | Relay has no private scope by design |
-| `thread_id` | string or null | meeting id, A2A context id, approval id, item id, `standup:<user>:<date>`, `digest:<date>` |
+| `thread_id` | string or null | meeting id, A2A context id, approval id, item id, `standup:<user>:<date>` (the user's local date), `digest:<date>` |
 | `payload` | typed, discriminated on `type` | extra fields are rejected |
 | `provenance` | `{segment_ids, tool_call_ids, parent_event_ids}` | how to audit where this came from |
 

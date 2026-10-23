@@ -7,12 +7,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from relayagents.core.events import Actor
-from relayagents.core.models import ApprovalRow
+from relayagents.core.models import ApprovalRow, UserRow
 from relayagents.core.store import EventStore
 from relayagents.tools.context import Services
 from relayagents.workers.standup import (
     StandupDraft,
     post_standup_from_draft,
+    run_due_standups,
     submit,
 )
 from tests.conftest import auth
@@ -111,3 +112,20 @@ async def test_an_expired_draft_is_not_posted(services: Services, team) -> None:
     async with services.db.session() as session:
         row = await session.get(ApprovalRow, approval_id)
         assert row is not None and row.status == "expired"
+
+
+async def test_a_scheduled_standup_is_threaded_by_the_users_local_date(
+    services: Services, team
+) -> None:  # type: ignore[no-untyped-def]
+    async with services.db.session() as session:
+        user = await session.get(UserRow, "linus")
+        assert user is not None
+        user.timezone, user.standup_mode = "Pacific/Auckland", "auto"
+        await session.commit()
+    # 09:00 on 15 June in Auckland is 21:00 on 14 June in UTC
+    assert await run_due_standups(services, now=datetime(2026, 6, 14, 21, 0, tzinfo=UTC)) == [
+        "linus"
+    ]
+    async with services.db.session() as session:
+        (ev,) = await EventStore(session).query(types=["standup.posted"])
+    assert ev.thread_id == "standup:linus:2026-06-15"
