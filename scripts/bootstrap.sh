@@ -33,13 +33,13 @@ for _ in $(seq 1 60); do
 done
 
 admin="${1:-owner}"
-echo "creating admin user '${admin}' (no Hermes container for the admin)..."
-if ! docker compose exec -T relay-api relay add-user "${admin}" --name "${admin}" --admin --no-container; then
+echo "creating admin user '${admin}'..."
+if ! docker compose exec -T relay-api relay add-user "${admin}" --name "${admin}" --admin; then
   echo "admin user not created (already exists? re-run with: scripts/bootstrap.sh <id> after 'relay add-user <id> --reissue')"
 fi
 echo
 echo "next:"
 echo "  relay login --url \$(grep ^RELAY_PUBLIC_URL .env | cut -d= -f2) --token <human token printed above>"
-echo "  scripts/add-user.sh <teammate>       # on the node, per teammate (user, tokens, AgentCard, Hermes container)"
+echo "  scripts/add-user.sh <teammate>       # on the node, per teammate (user record and human token)"
 echo "  relay setup-agent claude-code        # on each laptop"
 echo "  relay meeting upload --transcript fixtures/transcript_sample.json --skip-asr --participants ada,grace,linus"
