@@ -36,7 +36,7 @@ from relayagents.core.events import (
     StandupPosted,
 )
 from relayagents.core.indexing import index_later
-from relayagents.core.models import ApprovalRow, UserRow
+from relayagents.core.models import UserRow
 from relayagents.core.projections import list_items
 from relayagents.core.store import EventStore
 from relayagents.tools.context import Services
@@ -344,26 +344,37 @@ async def _approve_and_post(
     draft: StandupDraft,
     user: UserRow,
     approval_id: str | None,
-) -> Event | None:
-    """Post the draft on the owner's click. None when this draft was already approved and posted:
-    a double click, or Slack retrying the action, must not post twice."""
+) -> Event | str:
+    """Post the draft on the owner's click, or say why not: only the click that resolves the
+    approval posts, so a double click, a Slack retry, or an earlier CLI approval cannot post twice,
+    and a draft past its expiry is not posted at all."""
     if approval_id:
-        row = await session.get(ApprovalRow, approval_id)
-        if row is not None and row.status == "approved":
-            return None
-        with contextlib.suppress(KeyError):  # the row may have expired; the click still counts
-            await approvals.resolve(
+        try:
+            row, won = await approvals.resolve_once(
                 session, approval_id=approval_id, decision="approved", resolved_by=user.id
             )
+        except KeyError:
+            pass  # no approval row behind this draft: the owner's click is the approval
+        else:
+            if not won:
+                return row.status
     return await _post(services, session, draft, user, mode="draft", actor=Actor.human(user.id))
 
 
-def _posted_blocks(ev: Event | None, *, edited: bool = False) -> tuple[str, list[dict[str, Any]]]:
-    if ev is None:
-        text = "This standup was already posted."
-        return text, [
-            {"type": "section", "text": {"type": "mrkdwn", "text": f":white_check_mark: {text}"}}
-        ]
+NOT_POSTED = {
+    "approved": (":white_check_mark:", "This standup was already posted."),
+    "expired": (
+        ":hourglass:",
+        "This draft expired. The next one arrives at your standup time, or run `relay standup draft`.",
+    ),
+    "denied": (":no_entry:", "This draft was declined, so it was not posted."),
+}
+
+
+def _posted_blocks(ev: Event | str, *, edited: bool = False) -> tuple[str, list[dict[str, Any]]]:
+    if isinstance(ev, str):
+        emoji, text = NOT_POSTED.get(ev, (":warning:", f"This draft is {ev}; nothing was posted."))
+        return text, [{"type": "section", "text": {"type": "mrkdwn", "text": f"{emoji} {text}"}}]
     label = "Standup posted (edited)." if edited else "Standup posted."
     return f"Standup posted ({ev.id}).", [
         {
