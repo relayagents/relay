@@ -227,15 +227,19 @@ async def ask(ctx: ToolContext, inp: AskInput) -> AskOutput:
     await index_later(ctx.services, [q])
     notified = False
     if ctx.services.chat is not None:
-        verb = "asked your agent" if task is not None else "asked you"
+        # Told as a person either way: an agent that also has it does not act on it (ADR-0011).
+        also = f"; your agent `{agent.id}` also has it" if agent is not None else ""
+        reply = "" if agent is not None else f"\nReply to `{ctx.user_id}` directly."
         try:
             await ctx.services.chat.dm(
                 target_user,
-                f":speech_balloon: `{ctx.actor.id}` {verb} (thread `{thread_id}`):\n> {inp.question}",
+                f":speech_balloon: `{ctx.actor.id}` asked you (thread `{thread_id}`{also}):\n"
+                f"> {inp.question}{reply}",
             )
             notified = True
         except Exception as exc:
-            log.warning("ask.dm_failed", user=target_user, error=str(exc))
+            # the error type only: a Slack error can echo the request, which holds the question
+            log.warning("ask.dm_failed", user=target_user, error_type=type(exc).__name__)
     answer = None
     state = task.status.state if task is not None else "human_only"
     if task is not None and inp.wait_s:
