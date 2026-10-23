@@ -1,10 +1,10 @@
 # Agent contract
 
-Any agent can be a teammate's agent in Relay if it does three things. Hermes Agent is the reference; a long-running research agent (say, an outerloop-autoresearch run that reports to the team) satisfies the same contract.
+Any agent can be a teammate's agent in Relay if it does three things. The reference is the laptop coding agent connected per project ([ADR-0010](adr/0010-coding-agents-opt-in-per-project.md)); a long-running research agent (say, an outerloop-autoresearch run that reports to the team) satisfies the same contract. Relay provisions no agents of its own ([ADR-0011](adr/0011-session-agents-and-pr-watcher.md)).
 
 ## 1. Be reachable: an AgentCard and an inbox
 
-- Register an AgentCard: `POST /a2a/agents` with an **agent token** (actor `<user>.<harness>`). `relay add-user` does this for Hermes. The card is served at `GET /a2a/agents/<id>/.well-known/agent-card.json`.
+- Register an AgentCard: `POST /a2a/agents` with an **agent token** (actor `<user>.<harness>`). `relay setup-agent` mints the token; an agent that wants an inbox registers its own card. The card is served at `GET /a2a/agents/<id>/.well-known/agent-card.json`.
 - Receive tasks one of two ways:
   - **Pull** (default): long-poll `GET /a2a/inbox?wait=25` with the agent token. Tasks arrive in A2A `Task` shape (`id`, `contextId`, `status.state`, `history[]` of messages with `parts[].text`).
   - **Push**: register a `push_url`; Relay POSTs the task there (worker-driven; pull is the reliable path in v1).
@@ -39,7 +39,7 @@ is written for the agent to follow, and running `setup-agent` is the one time it
 
 ## Optional: daily updates
 
-If the agent should post standups on its human's behalf, run at the user's `standup_time`: `relay standup draft` (sourced facts, every line cites an event), tidy the wording without adding facts, then `relay standup submit <file>`. Relay applies the user's mode (`draft`, `auto`, `off`).
+Relay's workers build each user's standup at their `standup_time` and apply their mode (`draft`, `auto`, `off`); an agent does not need to schedule anything ([ADR-0011](adr/0011-session-agents-and-pr-watcher.md)). What the agent owes the standup is `report` calls, because the draft is built from them. An agent may also draft one by hand when its human asks: `relay standup draft` (sourced facts, every line cites an event), tidy the wording without adding facts, then `relay standup submit <file>`.
 
 ## What the agent keeps to itself
 
@@ -47,7 +47,7 @@ Its private memory, its model provider and key, its personality, and anything th
 
 ## Identity
 
-- Agent id: `<user>.<harness>` (`ada.hermes`, `ada.claude-code`, `ada.autoresearch`). The prefix ties the agent to a human, whose tokens and approvals it depends on.
+- Agent id: `<user>.<harness>` (`ada.claude-code`, `ada.codex`, `ada.autoresearch`). The prefix ties the agent to a human, whose tokens and approvals it depends on.
 - A human may run several agents. Each gets its own token so the log says which one acted.
 
 ## Minimal implementation
