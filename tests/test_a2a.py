@@ -106,3 +106,23 @@ async def test_ask_unknown_user_is_a_clean_error(client: httpx.AsyncClient, team
         headers=auth(team["ada"]["agent"]),
     )
     assert r.status_code == 400 and "no agent registered" in r.json()["detail"]
+
+
+async def test_the_most_recently_seen_agent_gets_the_task(client: httpx.AsyncClient, team) -> None:  # type: ignore[no-untyped-def]
+    # grace adds a second agent; it is the newest, so it is the one asks go to
+    r = await client.post(
+        "/v1/tokens",
+        json={"actor_kind": "agent", "harness": "codex", "label": "agent:codex"},
+        headers=auth(team["grace"]["human"]),
+    )
+    codex = auth(r.json()["token"])
+    r = await client.post(
+        "/a2a/agents", json={"harness": "codex", "card": {"name": "grace.codex"}}, headers=codex
+    )
+    assert r.status_code in (200, 201), r.text
+    r = await client.post(
+        f"{TOOLS_PREFIX}/ask",
+        json={"user": "grace", "question": "Which branch?"},
+        headers=auth(team["ada"]["agent"]),
+    )
+    assert r.json()["to_agent"] == "grace.codex"

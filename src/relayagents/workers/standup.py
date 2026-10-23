@@ -1,9 +1,11 @@
 """Per-user standup support (vertical slice 2).
 
-The *drafting* happens in the user's own agent (a Hermes cron calls `relay standup draft`, adds
-its judgement, then `relay standup submit`). Relay's part is deterministic: gather the sourced
-facts, render the Block Kit draft with Approve/Edit buttons, and post only on a click (mode=draft)
-or immediately with attribution (mode=auto). Nothing posts when mode=off.
+Relay builds the draft from events and applies the user's posting mode. The workers' per-minute
+cron (`run_due_standups`) does this at each user's `standup_time` (ADR-0011); `relay standup
+draft` / `submit` let a person or their agent do the same by hand. Nothing adds facts to a draft:
+every line cites an event id. Relay renders the Block Kit draft with Approve/Edit buttons and
+posts only on a click (mode=draft) or immediately with attribution (mode=auto). Nothing posts
+when mode=off.
 
 In draft mode the click is a real approval: ``submit`` opens an ``ApprovalRow`` (+
 ``approval.requested``) and the button handlers resolve it (``approval.resolved``) before posting.

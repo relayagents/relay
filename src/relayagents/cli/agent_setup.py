@@ -9,8 +9,7 @@ that the printed form and the applied form cannot drift and tests can check eith
   environment variable, so the file holds no secret, and install the skill once at
   ``~/.agents/skills``. The skill does nothing where the Relay tools are not connected. The
   token goes straight into the ``--env-file`` (refused if git would track it).
-- Hermes: unchanged; it runs in the team's container, where Relay is always on. Generic: a
-  config template to fill in, since setup has nowhere to put a token.
+- Generic: a config template to fill in, since setup has nowhere to put a token.
 
 No step ever prints a token, previewed or applied: an agent running setup for its human reads
 this output, and a token in it would land in the agent's transcript.
@@ -35,7 +34,7 @@ from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import Any
 
-AGENTS = ("claude-code", "codex", "opencode", "cursor", "hermes", "generic")
+AGENTS = ("claude-code", "codex", "opencode", "cursor", "generic")
 # Laptop coding agents: connected per project, never from the home folder (ADR-0010).
 PROJECT_AGENTS = ("claude-code", "codex", "opencode", "cursor")
 MARKETPLACE_SOURCE = "relayagents/relay"
@@ -73,13 +72,6 @@ class WriteFile:
 
 
 @dataclass(frozen=True)
-class AppendFile:
-    path: Path
-    content: str
-    secret: str | None = None  # never described
-
-
-@dataclass(frozen=True)
 class InstallSkill:
     dest: Path
 
@@ -98,7 +90,7 @@ class Note:
     text: str
 
 
-Step = Run | WriteFile | AppendFile | InstallSkill | SetEnv | Note
+Step = Run | WriteFile | InstallSkill | SetEnv | Note
 
 
 @dataclass
@@ -211,14 +203,6 @@ def plan(
         p.steps = _plan_opencode(url, token, project, home, env_file)
     elif agent == "cursor":
         p.steps = _plan_cursor(url, token, project, home, env_file)
-    elif agent == "hermes":
-        p.steps = [
-            AppendFile(
-                home / ".hermes" / "config.yaml",
-                f"mcp_servers:\n  relay:\n    url: {url}/mcp\n    headers:\n      Authorization: Bearer {token}\n",
-                secret=token,
-            )
-        ]
     else:
         # Nothing to write, so nothing to hold a token: a printed one would be the human's own.
         p.steps = [
@@ -525,8 +509,6 @@ def describe(step: Step) -> str:
         return "$ " + " ".join(_quote(_mask(a, step.secret)) for a in step.argv)
     if isinstance(step, WriteFile):
         return f"# write {step.path}\n{_mask(step.content, step.secret)}"
-    if isinstance(step, AppendFile):
-        return f"# append to {step.path}\n{_mask(step.content, step.secret)}"
     if isinstance(step, InstallSkill):
         return f"# install the relay skill into {step.dest}"
     if isinstance(step, SetEnv):
@@ -560,10 +542,6 @@ def apply(step: Step, *, runner: Runner | None = None) -> None:
     elif isinstance(step, WriteFile):
         step.path.parent.mkdir(parents=True, exist_ok=True)
         step.path.write_text(step.content)
-    elif isinstance(step, AppendFile):
-        step.path.parent.mkdir(parents=True, exist_ok=True)
-        with step.path.open("a") as f:
-            f.write("\n" + step.content)
     elif isinstance(step, InstallSkill):
         install_skill(step.dest)
     elif isinstance(step, SetEnv):
