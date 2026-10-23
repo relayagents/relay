@@ -3,7 +3,6 @@ changes state. Handlers are transport-agnostic: the same function serves MCP, CL
 
 from __future__ import annotations
 
-import contextlib
 import re
 from datetime import UTC, datetime
 
@@ -226,13 +225,17 @@ async def ask(ctx: ToolContext, inp: AskInput) -> AskOutput:
         await EventStore(session).append(q)
         await session.commit()
     await index_later(ctx.services, [q])
+    notified = False
     if ctx.services.chat is not None:
         verb = "asked your agent" if task is not None else "asked you"
-        with contextlib.suppress(Exception):
+        try:
             await ctx.services.chat.dm(
                 target_user,
                 f":speech_balloon: `{ctx.actor.id}` {verb} (thread `{thread_id}`):\n> {inp.question}",
             )
+            notified = True
+        except Exception as exc:
+            log.warning("ask.dm_failed", user=target_user, error=str(exc))
     answer = None
     state = task.status.state if task is not None else "human_only"
     if task is not None and inp.wait_s:
@@ -247,6 +250,7 @@ async def ask(ctx: ToolContext, inp: AskInput) -> AskOutput:
         question_id=question_id,
         to_agent=agent.id if agent is not None else None,
         state=state,
+        notified=notified,
         answer=answer,
     )
 

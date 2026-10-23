@@ -132,7 +132,11 @@ class AskOutput(ToolOutput):
         default=None, description="The agent that also received the question, if any."
     )
     state: str = Field(
-        description="A2A task state, or 'human_only' when the person was told in Slack and no agent exists."
+        description="A2A task state, or 'human_only' when no agent exists and only the person is told."
+    )
+    notified: bool = Field(
+        default=False,
+        description="Whether the person was reached in Slack. With no agent and no DM, nobody was told; the question is still recorded.",
     )
     answer: str | None = None
 

@@ -118,6 +118,8 @@ TOOLS: tuple[ToolSpec, ...] = (
                 f"task {o.task_id} → {o.to_agent}"
                 if o.task_id
                 else "told the person in Slack (no agent registered)"
+                if o.notified
+                else "not delivered: no agent registered and the Slack DM failed (question recorded)"
             )
             + f" [{o.state}] thread {o.thread_id}"
             + (f"\n{o.answer}" if o.answer else "")
