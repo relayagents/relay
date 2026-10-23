@@ -6,9 +6,10 @@ import contextlib
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 from sqlalchemy import select
 
 from relayagents.api.auth import (
@@ -26,6 +27,18 @@ from relayagents.core.store import EventStore
 from relayagents.tools.context import Principal, Services
 
 router = APIRouter(prefix="/v1", tags=["users"])
+
+
+def _known_timezone(tz: str) -> str:
+    """The standup scheduler reads this every minute; refuse a name it cannot resolve."""
+    try:
+        ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ValueError(f"unknown timezone {tz!r}; use an IANA name such as Europe/Paris") from exc
+    return tz
+
+
+Timezone = Annotated[str, AfterValidator(_known_timezone)]
 
 
 class UserOut(BaseModel):
@@ -76,8 +89,8 @@ async def me(
 
 class UserSettingsIn(BaseModel):
     standup_mode: str | None = Field(default=None, pattern="^(draft|auto|off)$")
-    standup_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
-    timezone: str | None = None
+    standup_time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    timezone: Timezone | None = None
     slack_user_id: str | None = None
     github_login: str | None = None
 
@@ -139,7 +152,7 @@ class AddUserIn(BaseModel):
     email: str | None = None
     slack_user_id: str | None = None
     github_login: str | None = None
-    timezone: str = "UTC"
+    timezone: Timezone = "UTC"
     is_admin: bool = False
     reissue: bool = Field(
         default=False,
