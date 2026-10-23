@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import secrets
 from datetime import UTC, datetime, timedelta
+from functools import lru_cache
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
@@ -34,10 +35,16 @@ router = APIRouter(prefix="/v1", tags=["users"])
 NOT_IANA = frozenset({"localtime", "posixrules", "Factory"})
 
 
+@lru_cache(maxsize=1)
+def _iana_zones() -> frozenset[str]:
+    """Read once: listing the zones walks the tz directory, too slow for every request."""
+    return frozenset(available_timezones()) - NOT_IANA
+
+
 def _known_timezone(tz: str) -> str:
     """The standup scheduler reads this every minute; refuse anything but an IANA name."""
     try:
-        ok = tz not in NOT_IANA and tz in available_timezones() and ZoneInfo(tz) is not None
+        ok = tz in _iana_zones() and ZoneInfo(tz) is not None
     except (ZoneInfoNotFoundError, ValueError):
         ok = False
     if not ok:
