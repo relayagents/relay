@@ -83,10 +83,11 @@ async def request(
     thread_id: str | None = None,
     chat: ChatApp | None = None,
     provenance: Provenance | None = None,
+    now: datetime | None = None,
 ) -> ApprovalRow:
     details = redact(details or {})
     action = redact(action)
-    now = datetime.now(UTC)
+    now = now or datetime.now(UTC)
     approval_id = new_id("apr")
     expires = now + timedelta(seconds=ttl_s)
     event = Event.new(
@@ -102,6 +103,7 @@ async def request(
         source="api",
         thread_id=thread_id or approval_id,
         provenance=provenance,
+        ts=now,
     )
     await EventStore(session).append(event)
     row = ApprovalRow(

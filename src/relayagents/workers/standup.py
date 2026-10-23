@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import contextlib
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -45,6 +45,7 @@ DRAFT_TTL_S = 12 * 3600
 
 log = structlog.get_logger()
 SCHEDULER = Actor.system("relay.standup")
+CATCH_UP = timedelta(hours=2)  # a standup missed by a busy or restarting worker still goes out
 
 
 class StandupDraft(BaseModel):
@@ -146,8 +147,11 @@ def render_standup(draft: StandupDraft, display_name: str) -> str:
     )
 
 
-async def submit(services: Services, draft: StandupDraft, *, actor: Actor) -> dict[str, Any]:
-    """Apply the user's posting mode. Emits approval.* and standup.posted as appropriate."""
+async def submit(
+    services: Services, draft: StandupDraft, *, actor: Actor, now: datetime | None = None
+) -> dict[str, Any]:
+    """Apply the user's posting mode. Emits approval.* and standup.posted as appropriate, stamped
+    with ``now`` (the scheduler's tick) when given."""
     async with services.db.session() as session:
         user = await session.get(UserRow, draft.user_id)
         if user is None:
@@ -156,7 +160,7 @@ async def submit(services: Services, draft: StandupDraft, *, actor: Actor) -> di
         if mode == "off":
             return {"mode": "off", "posted": False}
         if mode == "auto":
-            ev = await _post(services, session, draft, user, mode="auto", actor=actor)
+            ev = await _post(services, session, draft, user, mode="auto", actor=actor, now=now)
             await session.commit()
             return {"mode": "auto", "posted": True, "event_id": ev.id}
         # draft mode: open a real approval (row + event) and DM the draft with buttons.
@@ -169,6 +173,7 @@ async def submit(services: Services, draft: StandupDraft, *, actor: Actor) -> di
             details={"draft": draft.model_dump()},
             ttl_s=DRAFT_TTL_S,
             chat=None,
+            now=now,
         )
         if services.chat is not None:
             if services.chat.supports_actions:
@@ -197,50 +202,66 @@ def local_now(user: UserRow, now: datetime) -> datetime:
     return now.astimezone(tz)
 
 
-def is_due(user: UserRow, now: datetime) -> bool:
-    return (
-        user.standup_mode != "off" and local_now(user, now).strftime("%H:%M") == user.standup_time
-    )
+def due_since(user: UserRow, local: datetime) -> timedelta | None:
+    """How long ago today's standup time passed, if it did within the catch-up window. A late or
+    restarted cron still sends it, and a time skipped by a DST jump runs once the clock is past it."""
+    if user.standup_mode == "off":
+        return None
+    try:
+        hour, minute = (int(x) for x in user.standup_time.split(":"))
+        at = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    except ValueError:
+        return None
+    late = local - at  # same tzinfo: wall-clock difference
+    return late if timedelta(0) <= late < CATCH_UP else None
 
 
-async def ran_today(session: AsyncSession, user_id: str, now: datetime) -> bool:
-    """True once a standup was posted or a draft offered for this user since the start of `now`'s
-    UTC day, so a worker restarting inside the due minute cannot send a second one."""
-    start = now.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+async def scheduled_today(session: AsyncSession, user_id: str, local: datetime) -> bool:
+    """True once the scheduler has drafted or posted this user's standup during their local day.
+    Only the scheduler's own records count: a draft approved after midnight, or a standup
+    submitted by hand, does not stand in for the next day's."""
+    start = datetime.combine(local.date(), time(0), tzinfo=local.tzinfo)
+    end = datetime.combine(local.date() + timedelta(days=1), time(0), tzinfo=local.tzinfo)
     events = await EventStore(session).query(
-        types=["standup.posted", "approval.requested"], since=start, limit=1000
+        types=["standup.posted", "approval.requested"],
+        actor_id=SCHEDULER.id,
+        since=start.astimezone(UTC),
+        until=end.astimezone(UTC),
+        limit=10_000,  # at most one per user per day
     )
-    for e in events:
-        p = e.payload
-        if isinstance(p, StandupPosted) and p.user_id == user_id:
-            return True
-        if (
-            isinstance(p, ApprovalRequested)
-            and p.action_type == "standup.post.draft"
-            and p.requested_of == user_id
-        ):
-            return True
-    return False
+    return any(
+        (isinstance(e.payload, StandupPosted) and e.payload.user_id == user_id)
+        or (isinstance(e.payload, ApprovalRequested) and e.payload.requested_of == user_id)
+        for e in events
+    )
 
 
 async def run_due_standups(services: Services, *, now: datetime | None = None) -> list[str]:
     """Called every minute by the workers: draft and submit for each user whose time has come.
     Returns the users whose standup went out; one user's failure does not stop the others."""
     now = now or datetime.now(UTC)
-    drafts: list[StandupDraft] = []
     async with services.db.session() as session:
         users = (await session.scalars(select(UserRow).where(UserRow.standup_mode != "off"))).all()
-        for user in users:
-            if is_due(user, now) and not await ran_today(session, user.id, now):
-                drafts.append(await gather(session, user.id, now=now))
     done: list[str] = []
-    for draft in drafts:
+    for user in users:
         try:
-            await submit(services, draft, actor=SCHEDULER)
+            local = local_now(user, now)
+            late = due_since(user, local)
+            if late is None:
+                continue
+            if user.standup_mode == "draft" and (services.chat is None or not user.slack_user_id):
+                if late < timedelta(minutes=1):  # say so once, not every minute of the window
+                    log.info("standup.no_dm_target", user=user.id)
+                continue
+            async with services.db.session() as session:
+                if await scheduled_today(session, user.id, local):
+                    continue
+                draft = await gather(session, user.id, now=now)
+            await submit(services, draft, actor=SCHEDULER, now=now)
         except Exception:
-            log.exception("standup.scheduled_failed", user=draft.user_id)
+            log.exception("standup.scheduled_failed", user=user.id)
             continue
-        done.append(draft.user_id)
+        done.append(user.id)
     return done
 
 
@@ -252,7 +273,9 @@ async def _post(
     *,
     mode: str,
     actor: Actor,
+    now: datetime | None = None,
 ) -> Event:
+    now = now or datetime.now(UTC)
     channel = services.settings.slack_team_channel
     ref = None
     if services.chat is not None and channel:
@@ -281,7 +304,8 @@ async def _post(
         ),
         actor=actor,
         source="slack",
-        thread_id=f"standup:{user.id}:{datetime.now(UTC):%Y-%m-%d}",
+        thread_id=f"standup:{user.id}:{now:%Y-%m-%d}",
+        ts=now,
         provenance=Provenance(parent_event_ids=list(draft.cited_event_ids)),
     )
     await EventStore(session).append(ev)
