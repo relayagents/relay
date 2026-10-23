@@ -89,9 +89,10 @@ right people, and feeds the standups and digests Relay already builds from event
      as `standup.posted` does, so replay rebuilds the thread; if the post fails the event is
      recorded without a ref and the next change starts a new root message.
    - Configuration: a list of repositories, a poll interval, and a **read-only GitHub token given
-     to `relay-workers` only**. This amends ADR-0002, which said Relay holds no GitHub token: Relay
-     may hold a read-only credential for observing, never for writing. Writes to GitHub remain per
-     user, under that user's own token, in their own agent.
+     to `relay-workers` only**. This amends ADR-0002, under which the only credential Relay holds
+     is the team model key in the workers and its PM has none of its own. The watcher adds a second
+     team-level credential: a read-only one, for observing, never for writing. Writes to GitHub
+     remain per user, under that user's own token, in their own agent.
 5. **No hub agent.** "One central node" means Relay as it is: the event log, workers, broker, and
    Slack app. Relay's PM stays deterministic, and the only model calls on the node remain
    extraction, embeddings, and the digest. Nothing in this ADR adds a model call on a person's
