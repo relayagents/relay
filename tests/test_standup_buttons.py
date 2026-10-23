@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import asyncio
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from relayagents.core.events import Actor
-from relayagents.core.models import UserRow
+from relayagents.core.models import ApprovalRow, UserRow
 from relayagents.core.store import EventStore
 from relayagents.tools.context import Services
 from relayagents.workers.standup import (
@@ -15,6 +16,7 @@ from relayagents.workers.standup import (
     run_due_standups,
     submit,
 )
+from tests.conftest import auth
 
 
 class FakeSlackClient:
@@ -71,3 +73,59 @@ async def test_a_scheduled_standup_is_threaded_by_the_users_local_date(
     async with services.db.session() as session:
         (ev,) = await EventStore(session).query(types=["standup.posted"])
     assert ev.thread_id == "standup:linus:2026-06-15"
+
+
+async def _draft_for_grace(services: Services) -> tuple[str, dict[str, Any]]:
+    out = await submit(
+        services,
+        StandupDraft(user_id="grace", doing=["evals"]),
+        actor=Actor.agent("grace.claude-code"),
+    )
+    approve = services.chat.dms[-1]["blocks"][1]["elements"][0]  # type: ignore[union-attr]
+    body = {
+        "actions": [{"value": approve["value"]}],
+        "user": {"id": "UGRACE"},
+        "channel": {"id": "DGRACE"},
+        "message": {"ts": "1.000"},
+    }
+    return out["approval_id"], body
+
+
+async def _posted(services: Services) -> int:
+    async with services.db.session() as session:
+        return len(await EventStore(session).query(types=["standup.posted"]))
+
+
+async def test_a_repeated_cli_approval_posts_once(client, services: Services, team) -> None:  # type: ignore[no-untyped-def]
+    approval_id, _ = await _draft_for_grace(services)
+    for _ in range(2):
+        r = await client.post(
+            f"/v1/approvals/{approval_id}/resolve",
+            json={"decision": "approved"},
+            headers=auth(team["grace"]["human"]),
+        )
+        assert r.status_code == 200, r.text
+    assert await _posted(services) == 1
+
+
+async def test_concurrent_clicks_post_once(services: Services, team) -> None:  # type: ignore[no-untyped-def]
+    _, body = await _draft_for_grace(services)
+    client = FakeSlackClient()
+    await asyncio.gather(*(post_standup_from_draft(services, body, client) for _ in range(3)))
+    assert await _posted(services) == 1
+
+
+async def test_an_expired_draft_is_not_posted(services: Services, team) -> None:  # type: ignore[no-untyped-def]
+    approval_id, body = await _draft_for_grace(services)
+    async with services.db.session() as session:
+        row = await session.get(ApprovalRow, approval_id)
+        assert row is not None
+        row.expires_at = datetime.now(UTC) - timedelta(minutes=1)
+        await session.commit()
+    client = FakeSlackClient()
+    await post_standup_from_draft(services, body, client)
+    assert await _posted(services) == 0
+    assert "expired" in client.updates[-1]["text"]
+    async with services.db.session() as session:
+        row = await session.get(ApprovalRow, approval_id)
+        assert row is not None and row.status == "expired"
