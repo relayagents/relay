@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import httpx
 
+from relayagents.api.routes.users import AddUserIn, create_user_with_tokens
+from relayagents.core.events import Actor
 from relayagents.tools.rest import TOOLS_PREFIX
 from tests.conftest import auth
 
@@ -105,7 +107,57 @@ async def test_ask_unknown_user_is_a_clean_error(client: httpx.AsyncClient, team
         json={"user": "nobody", "question": "?"},
         headers=auth(team["ada"]["agent"]),
     )
-    assert r.status_code == 400 and "no agent registered" in r.json()["detail"]
+    assert r.status_code == 400 and "unknown user" in r.json()["detail"]
+
+
+async def test_ask_without_an_agent_reaches_the_human(
+    client: httpx.AsyncClient, team, services
+) -> None:  # type: ignore[no-untyped-def]
+    await create_user_with_tokens(
+        services,
+        AddUserIn(id="nora", display_name="Nora", slack_user_id="UNORA"),
+        issued_by=Actor.system("relay.test"),
+    )
+    r = await client.post(
+        f"{TOOLS_PREFIX}/ask",
+        json={"user": "nora", "question": "Which GPU partition?"},
+        headers=auth(team["ada"]["agent"]),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["to_agent"] is None and body["task_id"] is None
+    assert body["state"] == "human_only"
+    dm = services.chat.dms[-1]
+    assert dm["user_id"] == "nora" and "asked you" in dm["text"] and "GPU partition" in dm["text"]
+    evs = (
+        await client.get(
+            "/v1/events", params={"thread": body["thread_id"]}, headers=auth(team["ada"]["human"])
+        )
+    ).json()
+    assert [e["type"] for e in evs] == ["question.opened"]
+
+
+async def test_ask_records_the_question_even_when_the_dm_fails(  # type: ignore[no-untyped-def]
+    client: httpx.AsyncClient, team, services, monkeypatch
+) -> None:
+    async def boom(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise LookupError("user has no slack_user_id")
+
+    monkeypatch.setattr(services.chat, "dm", boom)
+    r = await client.post(
+        f"{TOOLS_PREFIX}/ask",
+        json={"user": "grace", "question": "Still on it?"},
+        headers=auth(team["ada"]["agent"]),
+    )
+    assert r.status_code == 200, r.text
+    evs = (
+        await client.get(
+            "/v1/events",
+            params={"thread": r.json()["thread_id"]},
+            headers=auth(team["ada"]["human"]),
+        )
+    ).json()
+    assert "question.opened" in [e["type"] for e in evs]
 
 
 async def test_the_most_recently_seen_agent_gets_the_task(client: httpx.AsyncClient, team) -> None:  # type: ignore[no-untyped-def]
