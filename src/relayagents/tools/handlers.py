@@ -134,7 +134,7 @@ async def events(ctx: ToolContext, inp: EventsInput) -> EventsOutput:
     if not inp.include_tool_calls and not (types and any(t.startswith("tool.") for t in types)):
         # Filter in SQL so audit events do not consume the requested result limit.
         types = [t for t in (types or EVENT_TYPES) if not t.startswith("tool.")]
-    # A bare user id ("grace") means the human and all of their agents; "grace.hermes" is exact.
+    # A bare user id ("grace") means the human and all of their agents; "grace.claude-code" is exact.
     is_user = bool(actor) and "." not in actor
     async with ctx.db.session() as session:
         found = await EventStore(session).query(

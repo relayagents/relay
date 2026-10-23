@@ -134,10 +134,10 @@ class AgentRow(Base):
 
     __tablename__ = "agents"
 
-    id: Mapped[str] = mapped_column(String(128), primary_key=True)  # e.g. "ada.hermes"
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)  # e.g. "ada.claude-code"
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     name: Mapped[str] = mapped_column(String(128))
-    harness: Mapped[str] = mapped_column(String(32), default="hermes")
+    harness: Mapped[str] = mapped_column(String(32))
     card: Mapped[dict[str, Any]] = mapped_column(JSON)
     push_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(TZDateTime)
