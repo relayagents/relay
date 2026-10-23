@@ -69,7 +69,7 @@ Relay cannot see or stop them.
 
 ## Who can resolve an approval
 
-Only the human it was requested of (`requested_of`), via the Slack buttons, `relay approvals approve|deny <id>`, or `POST /v1/approvals/{id}/resolve` with a human token. When the Slack app has a bot token but no Socket Mode app token, Relay sends notices without buttons and points to the CLI instead. Agents cannot resolve approvals, and other humans get a 403. The resolver may edit the action text; the edit is recorded in `approval.resolved.edited_action`.
+Only the human it was requested of (`requested_of`), via the Slack buttons, `relay approvals approve|deny <id>`, or `POST /v1/approvals/{id}/resolve` with a human token. When the Slack app has a bot token but no Socket Mode app token, Relay sends notices without buttons and points to the CLI instead. Agents cannot resolve approvals, and other humans get a 403. The resolver may edit the action text; the edit is recorded in `approval.resolved.edited_action`. An approval resolves once: the status flips with a conditional update, so a second click, a retry, or a concurrent resolve changes nothing and acts on nothing. A pending approval past its `expires_at` becomes `expired` when someone tries to resolve it, and cannot be approved after that.
 
 ## Audit log
 
