@@ -1,6 +1,6 @@
 # ADR-0004: Hermes Agent as the reference per-user agent
 
-**Status:** accepted · 2026-09-03
+**Status:** superseded by [ADR-0011](0011-session-agents-and-pr-watcher.md) · 2026-10-22 (accepted 2026-09-03)
 
 ## Context
 
