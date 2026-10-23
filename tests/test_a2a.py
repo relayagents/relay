@@ -6,14 +6,27 @@ from relayagents.tools.rest import TOOLS_PREFIX
 from tests.conftest import auth
 
 
-async def test_agent_cards_are_registered_on_add_user(client: httpx.AsyncClient, team) -> None:  # type: ignore[no-untyped-def]
-    r = await client.get("/a2a/agents/grace.hermes/.well-known/agent-card.json")
+async def test_agents_register_themselves_not_add_user(client: httpx.AsyncClient, team) -> None:  # type: ignore[no-untyped-def]
+    # The fixture registered one agent per user, as `relay setup-agent` does.
+    r = await client.get("/a2a/agents/grace.claude-code/.well-known/agent-card.json")
     assert r.status_code == 200
     card = r.json()
-    assert card["name"] == "grace.hermes"
-    assert card["supportedInterfaces"][0]["url"].endswith("/a2a/agents/grace.hermes")
+    assert card["name"] == "grace.claude-code"
+    assert card["supportedInterfaces"][0]["url"].endswith("/a2a/agents/grace.claude-code")
     listed = (await client.get("/a2a/agents", headers=auth(team["ada"]["human"]))).json()
-    assert {a["agent_id"] for a in listed} == {"ada.hermes", "grace.hermes", "linus.hermes"}
+    assert {a["agent_id"] for a in listed} == {
+        "ada.claude-code",
+        "grace.claude-code",
+        "linus.claude-code",
+    }
+    # add-user mints the human token only (ADR-0011): no agent token, no AgentCard.
+    r = await client.post(
+        "/v1/users", json={"id": "mallory", "display_name": "M"}, headers=auth(team["ada"]["human"])
+    )
+    assert r.status_code == 201, r.text
+    assert set(r.json()) == {"user", "human_token", "relay_url"}
+    listed = (await client.get("/a2a/agents", headers=auth(team["ada"]["human"]))).json()
+    assert not any(a["agent_id"].startswith("mallory.") for a in listed)
 
 
 async def test_ask_flows_through_the_broker(client: httpx.AsyncClient, team, services) -> None:  # type: ignore[no-untyped-def]
@@ -26,7 +39,7 @@ async def test_ask_flows_through_the_broker(client: httpx.AsyncClient, team, ser
     )
     assert r.status_code == 200, r.text
     ask = r.json()
-    assert ask["to_agent"] == "grace.hermes" and ask["state"] == "submitted"
+    assert ask["to_agent"] == "grace.claude-code" and ask["state"] == "submitted"
     # grace's human was told (principle 7)
     assert any(
         d["user_id"] == "grace" and "asked your agent" in d["text"] for d in services.chat.dms
@@ -68,18 +81,20 @@ async def test_jsonrpc_message_send(client: httpx.AsyncClient, team) -> None:  #
             "message": {"role": "user", "parts": [{"text": "hello from a generic A2A client"}]}
         },
     }
-    r = await client.post("/a2a/agents/linus.hermes", json=body, headers=auth(team["ada"]["agent"]))
+    r = await client.post(
+        "/a2a/agents/linus.claude-code", json=body, headers=auth(team["ada"]["agent"])
+    )
     assert r.status_code == 200
     task = r.json()["result"]
-    assert task["status"]["state"] == "submitted" and task["metadata"]["to"] == "linus.hermes"
+    assert task["status"]["state"] == "submitted" and task["metadata"]["to"] == "linus.claude-code"
     got = await client.post(
-        "/a2a/agents/linus.hermes",
+        "/a2a/agents/linus.claude-code",
         json={"jsonrpc": "2.0", "id": 2, "method": "tasks/get", "params": {"id": task["id"]}},
         headers=auth(team["ada"]["agent"]),
     )
     assert got.json()["result"]["id"] == task["id"]
     bad = await client.post(
-        "/a2a/agents/nobody.hermes", json=body, headers=auth(team["ada"]["agent"])
+        "/a2a/agents/nobody.claude-code", json=body, headers=auth(team["ada"]["agent"])
     )
     assert "unknown agent" in bad.json()["error"]["message"]
 

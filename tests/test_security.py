@@ -170,16 +170,16 @@ async def test_cannot_append_into_someone_elses_task(client: httpx.AsyncClient, 
         },
     }
     r = await client.post(
-        "/a2a/agents/grace.hermes", json=hijack, headers=auth(team["linus"]["agent"])
+        "/a2a/agents/grace.claude-code", json=hijack, headers=auth(team["linus"]["agent"])
     )
     assert "another conversation" in r.json()["error"]["message"]
     r = await client.post(
-        "/a2a/agents/linus.hermes", json=hijack, headers=auth(team["ada"]["agent"])
+        "/a2a/agents/linus.claude-code", json=hijack, headers=auth(team["ada"]["agent"])
     )  # wrong recipient
     assert "another conversation" in r.json()["error"]["message"]
     # the original sender (or their human) may continue it, and the role is forced to user
     r = await client.post(
-        "/a2a/agents/grace.hermes", json=hijack, headers=auth(team["ada"]["human"])
+        "/a2a/agents/grace.claude-code", json=hijack, headers=auth(team["ada"]["human"])
     )
     task = r.json()["result"]
     assert task["history"][-1]["role"] == "user" and len(task["history"]) == 2
@@ -193,8 +193,8 @@ async def test_raw_event_append_is_allow_listed(client: httpx.AsyncClient, team)
         {
             "type": "agent.message",
             "task_id": "t",
-            "from_agent": "ada.hermes",
-            "to_agent": "grace.hermes",
+            "from_agent": "ada.claude-code",
+            "to_agent": "grace.claude-code",
             "text": "x",
         },
         {
@@ -225,7 +225,7 @@ async def test_raw_event_append_is_allow_listed(client: httpx.AsyncClient, team)
     assert (
         r.status_code == 201
         and r.json()["source"] == "api"
-        and r.json()["actor"]["id"] == "linus.hermes"
+        and r.json()["actor"]["id"] == "linus.claude-code"
     )
 
 
@@ -318,15 +318,15 @@ async def test_events_actor_filter_includes_a_users_agents(client: httpx.AsyncCl
             headers=auth(team["ada"]["human"]),
         )
     ).json()["events"]
-    assert {e["actor"]["id"] for e in both} == {"grace", "grace.hermes"}
+    assert {e["actor"]["id"] for e in both} == {"grace", "grace.claude-code"}
     only = (
         await client.post(
             f"{TOOLS_PREFIX}/events",
-            json={"actor": "grace.hermes", "since": "1h"},
+            json={"actor": "grace.claude-code", "since": "1h"},
             headers=auth(team["ada"]["human"]),
         )
     ).json()["events"]
-    assert {e["actor"]["id"] for e in only} == {"grace.hermes"}
+    assert {e["actor"]["id"] for e in only} == {"grace.claude-code"}
 
 
 async def _mint(services, actor: Actor, *scopes: str) -> dict[str, str]:  # type: ignore[no-untyped-def]
@@ -347,13 +347,13 @@ async def _mint(services, actor: Actor, *scopes: str) -> dict[str, str]:  # type
 
 async def test_rest_enforces_token_scopes(client: httpx.AsyncClient, services, team) -> None:  # type: ignore[no-untyped-def]
     """REST honors a narrowed token the same way MCP does (``required_scopes``)."""
-    agent = Actor.agent("ada.hermes")
+    agent = Actor.agent("ada.claude-code")
     full = auth(team["grace"]["agent"])
     event_id = (await client.get("/v1/events", headers=full)).json()[0]["id"]
     # one task addressed to ada's agent, so ada's agent may read and update it
     task_id = (
         await client.post(
-            "/a2a/agents/ada.hermes",
+            "/a2a/agents/ada.claude-code",
             json={"method": "message/send", "params": {"message": {"parts": [{"text": "hi"}]}}},
             headers=full,
         )
@@ -376,8 +376,8 @@ async def test_rest_enforces_token_scopes(client: httpx.AsyncClient, services, t
             ),
             ("a2a", client.get("/a2a/inbox", headers=h)),
             ("a2a", client.get("/a2a/agents", headers=h)),
-            ("a2a", client.post("/a2a/agents", json={"card": {"name": "hermes"}}, headers=h)),
-            ("a2a", client.post("/a2a/agents/grace.hermes", json=send, headers=h)),
+            ("a2a", client.post("/a2a/agents", json={"card": {"name": "claude-code"}}, headers=h)),
+            ("a2a", client.post("/a2a/agents/grace.claude-code", json=send, headers=h)),
             ("a2a", client.get(f"/a2a/tasks/{task_id}", headers=h)),
             ("a2a", client.post(f"/a2a/tasks/{task_id}", json={"state": "working"}, headers=h)),
         ]
@@ -431,7 +431,6 @@ async def test_minted_tokens_never_exceed_the_minting_tokens_scopes(  # type: ig
     assert r.status_code == 201, r.text
     out = r.json()
     assert await scopes_of(auth(out["human_token"])) == ["events:read"]
-    assert await scopes_of(auth(out["agent_token"])) == ["events:read"]
 
     # nor approve a device login into a full token
     d = (await client.post("/v1/auth/device", json={"user_id": "ada", "label": "cli"})).json()
