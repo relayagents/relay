@@ -184,7 +184,13 @@ async def test_draft_mode_needs_someone_to_dm(services: Services, team) -> None:
 
 @pytest.mark.parametrize(
     "body",
-    [{"timezone": "Mars/Olympus"}, {"timezone": "America/NewYork"}, {"standup_time": "25:00"}],
+    [
+        {"timezone": "Mars/Olympus"},
+        {"timezone": "America/NewYork"},
+        {"timezone": "localtime"},  # a file on the writer's machine, not an IANA name
+        {"timezone": "posixrules"},
+        {"standup_time": "25:00"},
+    ],
 )
 async def test_bad_schedule_settings_are_refused_on_write(client, team, body) -> None:  # type: ignore[no-untyped-def]
     r = await client.patch("/v1/me", json=body, headers=auth(team["grace"]["human"]))
