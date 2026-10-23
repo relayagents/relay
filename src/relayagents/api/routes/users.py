@@ -11,8 +11,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from relayagents.api.a2a_broker import broker
-from relayagents.api.a2a_broker.types import default_agent_card
 from relayagents.api.auth import (
     DEFAULT_SCOPES,
     admin_principal,
@@ -142,19 +140,16 @@ class AddUserIn(BaseModel):
     slack_user_id: str | None = None
     github_login: str | None = None
     timezone: str = "UTC"
-    harness: str = Field(default="hermes", pattern=r"^[a-z][a-z0-9_-]{1,31}$")
     is_admin: bool = False
     reissue: bool = Field(
         default=False,
-        description="Mint fresh tokens for an existing user (logged as token.issued).",
+        description="Mint a fresh human token for an existing user (logged as token.issued).",
     )
 
 
 class AddUserOut(BaseModel):
     user: UserOut
     human_token: str
-    agent_id: str
-    agent_token: str
     relay_url: str
 
 
@@ -165,7 +160,8 @@ async def create_user_with_tokens(
     issued_by: Actor,
     scopes: tuple[str, ...] = DEFAULT_SCOPES,
 ) -> AddUserOut:
-    """Shared by the admin REST route and `relay add-user` (which runs on the node).
+    """Shared by the admin REST route and `relay add-user` (which runs on the node). Mints the
+    human token only; agents get theirs from `relay setup-agent` (ADR-0011).
 
     The REST route passes the admin token's scopes so a narrowed token cannot mint broader ones.
     """
@@ -176,7 +172,7 @@ async def create_user_with_tokens(
         user = await session.get(UserRow, body.id)
         if user is not None and not body.reissue:
             raise HTTPException(
-                409, f"user {body.id!r} already exists; pass reissue=true to mint new tokens"
+                409, f"user {body.id!r} already exists; pass reissue=true to mint a new token"
             )
         if body.slack_user_id:
             clash = await session.scalar(
@@ -228,35 +224,9 @@ async def create_user_with_tokens(
             issued_via=via,
             scopes=scopes,
         )  # type: ignore[arg-type]
-        agent_id = f"{user.id}.{body.harness}"
-        agent_token, _ = await mint_token(
-            session,
-            user_id=user.id,
-            actor=Actor.agent(agent_id),
-            label=f"agent:{body.harness}",
-            settings=services.settings,
-            issued_by=issued_by,
-            issued_via=via,
-            scopes=scopes,
-        )  # type: ignore[arg-type]
-        card = default_agent_card(
-            agent_id, user.display_name, services.settings.public_url, body.harness
-        )
-        await broker.register_agent(
-            session,
-            agent_id=agent_id,
-            user_id=user.id,
-            harness=body.harness,
-            card=card,
-            by=issued_by,
-        )
         await session.commit()
         return AddUserOut(
-            user=_user_out(user),
-            human_token=human_token,
-            agent_id=agent_id,
-            agent_token=agent_token,
-            relay_url=services.settings.public_url,
+            user=_user_out(user), human_token=human_token, relay_url=services.settings.public_url
         )
 
 
