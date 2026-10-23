@@ -217,3 +217,17 @@ def test_add_user_cli_refuses_an_unknown_timezone_cleanly() -> None:
     result = CliRunner().invoke(main.app, ["add-user", "nora", "--timezone", "Mars/Olympus"])
     assert result.exit_code == 1 and "unknown timezone 'Mars/Olympus'" in result.output
     assert "Traceback" not in result.output
+
+
+def test_the_timezone_list_is_read_once(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    # a filesystem walk per request would block the event loop on every settings write
+    from relayagents.api.routes import users
+
+    users._iana_zones.cache_clear()
+    calls = []
+    real = users.available_timezones
+    monkeypatch.setattr(users, "available_timezones", lambda: calls.append(1) or real())
+    for tz in ("Europe/Paris", "UTC", "Asia/Tokyo"):
+        assert users._known_timezone(tz) == tz
+    assert len(calls) == 1
+    users._iana_zones.cache_clear()
