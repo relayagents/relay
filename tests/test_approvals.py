@@ -128,3 +128,58 @@ async def test_post_as_agent_is_attributed_and_audited(
         )
     ).json()
     assert evs[-2]["payload"]["target"] == "slack:C_TEAM" and evs[-1]["payload"]["ok"] is True
+
+
+async def test_a_slack_click_shows_what_actually_happened(services, team) -> None:  # type: ignore[no-untyped-def]
+    from datetime import UTC, datetime, timedelta
+    from typing import Any
+
+    from relayagents.api.slack.app import _resolve_from_slack
+    from relayagents.core import approvals
+    from relayagents.core.events import Actor
+    from relayagents.core.models import ApprovalRow
+
+    class Client:
+        def __init__(self) -> None:
+            self.updates: list[dict[str, Any]] = []
+
+        async def chat_update(self, **kw: Any) -> None:
+            self.updates.append(kw)
+
+        async def chat_postEphemeral(self, **kw: Any) -> None:  # noqa: N802 (Slack's name)
+            raise AssertionError("grace may resolve her own approval")
+
+    async def open_one(*, expired: bool) -> str:
+        async with services.db.session() as session:
+            row = await approvals.request(
+                session,
+                requester=Actor.agent("grace.claude-code"),
+                requested_of="grace",
+                action="open an issue",
+                action_type="github.issue.create",
+            )
+            if expired:
+                row.expires_at = datetime.now(UTC) - timedelta(minutes=1)
+            await session.commit()
+            return row.id
+
+    def click(approval_id: str) -> dict[str, Any]:
+        return {
+            "actions": [{"value": approval_id}],
+            "user": {"id": "UGRACE"},
+            "channel": {"id": "DGRACE"},
+            "message": {"ts": "1.000"},
+        }
+
+    client = Client()
+    stale = await open_one(expired=True)
+    await _resolve_from_slack(services, click(stale), client, "approved")
+    assert "Expired" in client.updates[-1]["text"] and "Approved" not in client.updates[-1]["text"]
+
+    fresh = await open_one(expired=False)
+    await _resolve_from_slack(services, click(fresh), client, "denied")
+    await _resolve_from_slack(services, click(fresh), client, "approved")  # a late second click
+    assert "Denied" in client.updates[-1]["text"] and "Approved" not in client.updates[-1]["text"]
+    async with services.db.session() as session:
+        row = await session.get(ApprovalRow, fresh)
+        assert row is not None and row.status == "denied"
