@@ -129,7 +129,7 @@ async def items(ctx: ToolContext, inp: ItemsInput) -> ItemsOutput:
 async def events(ctx: ToolContext, inp: EventsInput) -> EventsOutput:
     actor = ctx.resolve_user(inp.actor)
     types = list(inp.type) if inp.type else None
-    # A bare user id ("grace") means the human and all of their agents; "grace.hermes" is exact.
+    # A bare user id ("grace") means the human and all of their agents; "grace.claude-code" is exact.
     is_user = bool(actor) and "." not in actor
     async with ctx.db.session() as session:
         found = await EventStore(session).query(

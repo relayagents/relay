@@ -147,9 +147,7 @@ def me(
 
 @app.command("setup-agent")
 def setup_agent(
-    agent: Annotated[
-        str, typer.Argument(help="claude-code | codex | opencode | cursor | hermes | generic")
-    ],
+    agent: Annotated[str, typer.Argument(help="claude-code | codex | opencode | cursor | generic")],
     write: Annotated[bool, typer.Option(help="Apply the steps instead of printing them.")] = False,
     agent_token: Annotated[
         bool,

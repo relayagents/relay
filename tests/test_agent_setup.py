@@ -521,16 +521,6 @@ def test_setup_agent_rejects_unknown_agent() -> None:
     assert "unknown agent" in result.output
 
 
-def test_hermes_config_carries_the_minted_token(tmp_path: Path) -> None:
-    (step,) = s.plan("hermes", URL, TOKEN, tmp_path / "anywhere", home=tmp_path).steps
-    assert isinstance(step, s.AppendFile)
-    assert step.path == tmp_path / ".hermes" / "config.yaml"
-    assert f"Authorization: Bearer {TOKEN}" in step.content
-    assert TOKEN not in s.describe(step) and "Bearer ***" in s.describe(step)
-    s.apply(step)
-    assert f"Authorization: Bearer {TOKEN}" in step.path.read_text()
-
-
 def test_not_logged_in_is_a_one_line_error(tmp_path, monkeypatch) -> None:
     # The connect guide (docs/connect-your-agent.md) has agents run `relay whoami` to check this.
     from relayagents.cli import client

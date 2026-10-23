@@ -155,7 +155,7 @@ class EventStore:
         if actor_id:
             stmt = stmt.where(EventRow.actor_id == actor_id)
         if user_id:
-            # a human and all of their agents (`ada`, `ada.hermes`, `ada.claude-code`)
+            # a human and all of their agents (`ada`, `ada.claude-code`, `ada.codex`)
             stmt = stmt.where(
                 (EventRow.actor_id == user_id) | EventRow.actor_id.like(f"{user_id}.%")
             )
