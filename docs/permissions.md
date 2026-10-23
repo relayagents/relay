@@ -7,7 +7,7 @@ Relay's rule: **agents act under their human's own tokens, external writes need 
 | Token | Held by | Acts as | Obtained via |
 |---|---|---|---|
 | Relay human token | the person (CLI) | `human:<user>` | `relay login` (Slack-approved device flow) or `relay add-user` |
-| Relay agent token | that person's agent container / coding agent | `agent:<user>.<harness>` | `relay add-user`, `relay setup-agent`, `POST /v1/tokens` |
+| Relay agent token | that person's coding agent, per project | `agent:<user>.<harness>` | `relay setup-agent`, `POST /v1/tokens` |
 | GitHub token | the person's agent environment (`GH_TOKEN`) | the person, via `gh` | the person creates it; Relay never stores it |
 | Google OAuth grant | `workspace-mcp` per user | the person | OAuth consent in the browser; Relay never sees it |
 | Team model key | workers only | Relay extraction/embeddings | `.env` (`TEAM_*_API_KEY`) |

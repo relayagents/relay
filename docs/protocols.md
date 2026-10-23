@@ -11,7 +11,6 @@ Every external system sits behind a `typing.Protocol` in `src/relayagents/core/p
 | `ChatApp` — `post`, `dm`, `update` | `connectors/slack.SlackChatApp` (one app, Socket Mode) | Discord, Mattermost; `RecordingChatApp` for tests |
 | `IssueTracker` — `create_issue`, `list_issues` | `connectors/github.GhIssueTracker` (`gh` with `GH_TOKEN` per user) | Linear, GitLab |
 | `CodingAgent` — `run(prompt, workdir, env, timeout)` | `connectors/coding_agents.CliCodingAgent` for `claude -p`, `codex exec`, `opencode run`, local or in the sandbox image | any headless CLI |
-| `UserAgent` — `provision(user, relay_url, relay_token)`, `deliver(task)` | `connectors/hermes.HermesUserAgent` (one container per user + `relay_bridge.py`) | anything satisfying [agent-contract.md](agent-contract.md) |
 
 Model providers are behind Pydantic AI (extraction) and Graphiti's `LLMClient`/`EmbedderClient` (graph). Both read the team key from the workers' environment only.
 
