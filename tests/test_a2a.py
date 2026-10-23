@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import httpx
+import structlog.testing
 
 from relayagents.api.routes.users import AddUserIn, create_user_with_tokens
 from relayagents.core.events import Actor
@@ -43,8 +44,12 @@ async def test_ask_flows_through_the_broker(client: httpx.AsyncClient, team, ser
     ask = r.json()
     assert ask["to_agent"] == "grace.claude-code" and ask["state"] == "submitted"
     # grace's human was told (principle 7)
+    # told as a person: the agent having it too does not mean the agent will act on it (ADR-0011)
     assert any(
-        d["user_id"] == "grace" and "asked your agent" in d["text"] for d in services.chat.dms
+        d["user_id"] == "grace"
+        and "asked you" in d["text"]
+        and "`grace.claude-code` also has it" in d["text"]
+        for d in services.chat.dms
     )
     # grace's agent long-polls its inbox
     inbox = (await client.get("/a2a/inbox", params={"wait": 0}, headers=auth(grace_agent))).json()
@@ -129,6 +134,7 @@ async def test_ask_without_an_agent_reaches_the_human(
     assert body["state"] == "human_only" and body["notified"] is True
     dm = services.chat.dms[-1]
     assert dm["user_id"] == "nora" and "asked you" in dm["text"] and "GPU partition" in dm["text"]
+    assert "Reply to `ada` directly" in dm["text"]  # Relay does not collect the answer
     evs = (
         await client.get(
             "/v1/events", params={"thread": body["thread_id"]}, headers=auth(team["ada"]["human"])
@@ -144,12 +150,16 @@ async def test_ask_records_the_question_even_when_the_dm_fails(  # type: ignore[
         raise LookupError("user has no slack_user_id")
 
     monkeypatch.setattr(services.chat, "dm", boom)
-    r = await client.post(
-        f"{TOOLS_PREFIX}/ask",
-        json={"user": "grace", "question": "Still on it?"},
-        headers=auth(team["ada"]["agent"]),
-    )
+    with structlog.testing.capture_logs() as logs:
+        r = await client.post(
+            f"{TOOLS_PREFIX}/ask",
+            json={"user": "grace", "question": "Still on it?"},
+            headers=auth(team["ada"]["agent"]),
+        )
     assert r.status_code == 200, r.text
+    (failed,) = [e for e in logs if e["event"] == "ask.dm_failed"]
+    assert failed["error_type"] == "LookupError"
+    assert "slack_user_id" not in str(failed)  # an SDK error can echo the request payload
     assert r.json()["notified"] is False  # the caller learns nobody was told in Slack
     evs = (
         await client.get(
