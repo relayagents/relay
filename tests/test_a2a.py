@@ -126,7 +126,7 @@ async def test_ask_without_an_agent_reaches_the_human(
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["to_agent"] is None and body["task_id"] is None
-    assert body["state"] == "human_only"
+    assert body["state"] == "human_only" and body["notified"] is True
     dm = services.chat.dms[-1]
     assert dm["user_id"] == "nora" and "asked you" in dm["text"] and "GPU partition" in dm["text"]
     evs = (
@@ -150,6 +150,7 @@ async def test_ask_records_the_question_even_when_the_dm_fails(  # type: ignore[
         headers=auth(team["ada"]["agent"]),
     )
     assert r.status_code == 200, r.text
+    assert r.json()["notified"] is False  # the caller learns nobody was told in Slack
     evs = (
         await client.get(
             "/v1/events",
@@ -158,6 +159,17 @@ async def test_ask_records_the_question_even_when_the_dm_fails(  # type: ignore[
         )
     ).json()
     assert "question.opened" in [e["type"] for e in evs]
+
+
+def test_ask_render_says_when_nobody_was_told() -> None:
+    from relayagents.tools.registry import TOOLS
+    from relayagents.tools.schemas import AskOutput
+
+    (spec,) = [t for t in TOOLS if t.name == "ask"]
+    out = AskOutput(thread_id="thr_1", question_id="q_1", state="human_only", notified=False)
+    assert "not delivered" in spec.render(out) and "told the person" not in spec.render(out)
+    out = AskOutput(thread_id="thr_1", question_id="q_1", state="human_only", notified=True)
+    assert "told the person in Slack" in spec.render(out)
 
 
 async def test_the_most_recently_seen_agent_gets_the_task(client: httpx.AsyncClient, team) -> None:  # type: ignore[no-untyped-def]
