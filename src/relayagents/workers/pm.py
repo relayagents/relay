@@ -7,9 +7,9 @@ registered agent, also hands the item to that agent over A2A so it shows up in t
 
 from __future__ import annotations
 
-import contextlib
 from typing import Any
 
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relayagents.api.a2a_broker import broker
@@ -26,6 +26,7 @@ from relayagents.core.models import MeetingRow
 from relayagents.tools.context import Services
 
 PM_ACTOR = Actor.system("relay.pm")
+log = structlog.get_logger()
 
 
 def summary_text(meeting: MeetingRow, events: list[Event]) -> str:
@@ -85,7 +86,12 @@ async def dispatch(
     session: AsyncSession, services: Services, meeting: MeetingRow, events: list[Event]
 ) -> dict[str, Any]:
     """Post the summary, DM every assignee, and hand the item to their agent when one exists."""
-    out: dict[str, Any] = {"summary_posted": False, "tasks": [], "human_only": []}
+    out: dict[str, Any] = {
+        "summary_posted": False,
+        "tasks": [],
+        "human_only": [],
+        "not_notified": [],
+    }
     chat = services.chat
     channel = services.settings.slack_team_channel
     if chat is not None and channel:
@@ -124,7 +130,12 @@ async def dispatch(
             out["tasks"].append({"task_id": task.id, "to": agent.id, "item_id": p.item_id})
         else:
             out["human_only"].append({"item_id": p.item_id, "assignee": p.assignee})
-        if chat is not None:
-            with contextlib.suppress(Exception):
-                await chat.dm(p.assignee, item_dm_text(meeting, p, task_id))
+        try:
+            if chat is None:
+                raise LookupError("Slack is not configured")
+            await chat.dm(p.assignee, item_dm_text(meeting, p, task_id))
+        except Exception as exc:
+            # `my_items` still shows the item; record who was not told so the job result says so
+            log.warning("pm.dm_failed", user=p.assignee, error_type=type(exc).__name__)
+            out["not_notified"].append({"item_id": p.item_id, "assignee": p.assignee})
     return out

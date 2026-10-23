@@ -12,9 +12,11 @@ from relayagents.tools.context import Services
 from relayagents.workers import pm
 
 
-async def _dispatch_to(services: Services, assignee: str) -> dict[str, Any]:
+async def _dispatch_to(
+    services: Services, assignee: str, meeting_id: str = "mtg_pm"
+) -> dict[str, Any]:
     meeting = MeetingRow(
-        id="mtg_pm",
+        id=meeting_id,
         title="Sync",
         status="done",
         participants=[assignee],
@@ -23,11 +25,11 @@ async def _dispatch_to(services: Services, assignee: str) -> dict[str, Any]:
     )
     ev = Event.new(
         ActionItemCreated(
-            item_id="item_pm", title="Write the eval doc", assignee=assignee, meeting_id="mtg_pm"
+            item_id="item_pm", title="Write the eval doc", assignee=assignee, meeting_id=meeting_id
         ),
         actor=Actor.system("relay.test"),
         source="meeting",
-        thread_id="mtg_pm",
+        thread_id=meeting_id,
     )
     async with services.db.session() as session:
         session.add(meeting)
@@ -72,3 +74,17 @@ async def test_dispatch_also_hands_the_item_to_a_registered_agent(services: Serv
     dm = services.chat.dms[-1]  # type: ignore[union-attr]
     assert dm["user_id"] == "grace" and "Write the eval doc" in dm["text"]
     assert f"Your agent also has it as task `{task['task_id']}`" in dm["text"]
+
+
+async def test_dispatch_reports_who_was_not_told(services: Services, monkeypatch) -> None:
+    await _add_nora(services)
+
+    async def boom(*args: Any, **kwargs: Any) -> None:
+        raise LookupError("nora has no slack_user_id")
+
+    monkeypatch.setattr(services.chat, "dm", boom)
+    out = await _dispatch_to(services, "nora")
+    assert out["not_notified"] == [{"item_id": "item_pm", "assignee": "nora"}]
+    services.chat = None
+    out = await _dispatch_to(services, "nora", meeting_id="mtg_pm2")
+    assert out["not_notified"] == [{"item_id": "item_pm", "assignee": "nora"}]
