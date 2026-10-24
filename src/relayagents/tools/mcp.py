@@ -50,8 +50,13 @@ def build_mcp_server(services: Services) -> MCPServer:
     public = services.settings.public_url.rstrip("/")
     kwargs: dict[str, Any] = {
         "token_verifier": RelayTokenVerifier(services),
+        # Relay tokens are opaque rows in this server's own token table, so RelayTokenVerifier is
+        # the audience check; there is no RFC 8707 resource on them for the SDK to compare.
         "auth": AuthSettings(
-            issuer_url=public, resource_server_url=f"{public}/mcp", required_scopes=["tools"]
+            issuer_url=public,
+            resource_server_url=f"{public}/mcp",
+            required_scopes=["tools"],
+            validate_token_resource=False,
         ),
     }
     server = MCPServer(
