@@ -151,12 +151,6 @@ def setup_agent(
         str, typer.Argument(help="claude-code | codex | opencode | cursor | hermes | generic")
     ],
     write: Annotated[bool, typer.Option(help="Apply the steps instead of printing them.")] = False,
-    agent_token: Annotated[
-        bool,
-        typer.Option(
-            help="Mint a dedicated agent token (actor `<you>.<agent>`) instead of reusing your human token."
-        ),
-    ] = True,
     project: Annotated[
         Path | None,
         typer.Option(
@@ -200,7 +194,9 @@ def setup_agent(
         raise typer.Exit(1)
     c = _client()
     root = agent_setup.project_root(project or Path.cwd())
-    mint = agent_token and agent != "generic"
+    # An agent always gets its own token (actor `<you>.<agent>`), never the human's: a human token
+    # resolves approvals and mints tokens, which no agent may do.
+    mint = agent != "generic"
     if env_file is not None and not env_file.expanduser().is_absolute():
         env_file = root / env_file  # like --project: relative to the project, not the cwd
     label = agent_setup.token_label(agent, root, env_file)
@@ -215,12 +211,10 @@ def setup_agent(
             marketplace=marketplace,
             env_file=env_file,
         )
-        token = c.creds.token
+        token = TOKEN_PLACEHOLDER  # a preview changes nothing, on the server included
         if mint and write:
             minted = c.post("/v1/tokens", {"label": label, "actor_kind": "agent", "harness": agent})
             token = minted["token"]
-        elif mint:
-            token = TOKEN_PLACEHOLDER  # a preview changes nothing, on the server included
         steps = agent_setup.plan(
             agent, c.creds.url, token, root, marketplace=marketplace, env_file=env_file
         ).steps
