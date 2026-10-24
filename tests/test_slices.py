@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import httpx
 
+from relayagents.api.app import build_services
 from relayagents.core import projections
 from relayagents.core.store import EventStore
 from relayagents.tools.rest import TOOLS_PREFIX
@@ -158,3 +161,17 @@ async def test_health(client: httpx.AsyncClient) -> None:
         assert field in body and isinstance(body[field], bool)
     for legacy in ("slack", "workspace_mcp", "semantic_recall"):
         assert legacy not in body
+
+
+def test_workspace_mcp_is_off_unless_configured(settings) -> None:  # type: ignore[no-untyped-def]
+    # A default URL used to build the connector with nothing behind it, so /health always said
+    # workspace_mcp_configured: true.
+    assert settings.workspace_mcp_url == ""
+    assert build_services(settings).office is None
+    on = settings.model_copy(update={"workspace_mcp_url": "http://workspace-mcp:8000/mcp"})
+    assert build_services(on).office is not None
+    compose = (Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text()
+    assert (
+        "RELAY_WORKSPACE_MCP_URL: ${GOOGLE_OAUTH_CLIENT_ID:+http://workspace-mcp:8000/mcp}"
+        in compose
+    )
