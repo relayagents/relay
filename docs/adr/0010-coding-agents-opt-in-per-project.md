@@ -13,9 +13,8 @@ Hermes-only skill baked into the Hermes image.
 A laptop agent works in many folders, and most of them are not team work: a personal site, a
 course assignment, someone else's open-source project. Anything the agent sends to Relay is visible
 to the whole team, so Relay must be off by default and on only where a project opted in. A lab
-(the first being the Agentic Learning AI Lab, whose `lab-core` plugin every member installs) wants
-its members to get Relay with little effort, but that plugin is installed for every project, so it
-cannot be what switches Relay on.
+whose members all install a shared plugin wants them to get Relay with little effort, but that
+plugin is installed for every project, so it cannot be what switches Relay on.
 
 What the harnesses support, checked against their docs in October 2026:
 
@@ -72,15 +71,15 @@ nothing regressed.
    broader reading of a different request. `request_approval` is for everything else. This is
    guidance, not enforcement: the writes use the agent's own `gh` and never pass through Relay.
    The MCP instructions, the agent contract, and `docs/permissions.md` say the same.
-5. **Labs document, they do not bundle.** `lab-core` points members at the connect guide; it
+5. **Labs document, they do not bundle.** A lab's shared plugin points members at the connect guide; it
    does not declare Relay as a plugin dependency, because a dependency installs and enables at
    the dependent's scope, which would be every project.
 
 ## Alternatives
 
-- **Make Relay a dependency of `lab-core`.** One install for everyone, but Relay would be on in
+- **Make Relay a dependency of a lab's shared plugin.** One install for everyone, but Relay would be on in
   every folder, which is the problem this ADR exists to prevent.
-- **Copy the skill into `lab-core`.** No cross-repo wiring, but every change to the tool surface
+- **Copy the skill into a lab's shared plugin.** No cross-repo wiring, but every change to the tool surface
   would have to be copied by hand, and nothing would notice when it was not.
 - **Commit the skill into each team repo (`.agents/skills`, `.claude/skills`).** Opt-in by
   presence, but one stale copy per repo.
@@ -93,5 +92,5 @@ nothing regressed.
 
 Hermes gains project-scoped MCP or skills; Codex, OpenCode, or Cursor gains a private per-user project
 config (then setup-agent should stop writing a file into the repo); Claude Code plugin
-dependencies gain a per-project mode (then `lab-core` could depend on Relay); or the skill grows
+dependencies gain a per-project mode (then a lab's shared plugin could depend on Relay); or the skill grows
 past what one file can hold.
