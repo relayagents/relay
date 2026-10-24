@@ -59,9 +59,10 @@ Update this file when you finish or reprioritize something; it is the handoff be
 - **Notifications to agents.** An agent that is not running cannot be notified, and no
   agent-agnostic push exists yet. Pending asks reach the person in Slack and are answered in their
   next session. Revisit when a harness-agnostic path appears or a concrete workload waits on one.
-- **Running or babysitting experiments.** NYU's HPC cluster needs 2FA over VPN and has per-account
-  quotas, so nothing on the node can reach it and one shared cluster agent is not workable. If
-  resumed: a per-person resident Slurm job that polls Relay outbound (option F in #40).
+- **Running or babysitting experiments.** An open question in ADR-0011: a Slurm cluster that needs
+  an interactive 2FA login, often only over a VPN, with per-account quotas, cannot be reached from
+  the node. One candidate is a per-person resident Slurm job that polls Relay outbound (option F in
+  #40); the subagent launcher ADR decides.
 - **GitHub webhook** as an accelerator for the PR watcher; needs a public URL (Tailscale Funnel, a
   tunnel, or a VPS).
 
