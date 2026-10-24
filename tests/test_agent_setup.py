@@ -318,10 +318,7 @@ def test_setup_agent_write_needs_an_env_file(tmp_path, monkeypatch, agent: str) 
 
 @pytest.mark.parametrize("agent", s.AGENTS)
 @pytest.mark.parametrize("write", [False, True], ids=["preview", "write"])
-@pytest.mark.parametrize("agent_token", [True, False], ids=["minted", "human"])
-def test_setup_agent_never_prints_a_token(
-    tmp_path, monkeypatch, agent: str, write: bool, agent_token: bool
-) -> None:
+def test_setup_agent_never_prints_a_token(tmp_path, monkeypatch, agent: str, write: bool) -> None:
     # An agent running setup for its human reads all of this output into its transcript.
     fake = _FakeClient()
     project = tmp_path / "proj"
@@ -342,13 +339,46 @@ def test_setup_agent_never_prints_a_token(
         args += ["--env-file", ".envrc"]
     if write:
         args.append("--write")
-    if not agent_token:
-        args.append("--no-agent-token")
     result = CliRunner().invoke(main.app, args)
     assert result.exit_code == 0, result.output
-    assert fake.minted != [] if write and agent_token and agent != "generic" else fake.minted == []
+    assert fake.minted != [] if write and agent != "generic" else fake.minted == []
     assert TOKEN not in result.output
     assert fake.creds.token not in result.output
+
+
+@pytest.mark.parametrize("agent", s.AGENTS)
+def test_setup_agent_never_writes_the_human_token(tmp_path, monkeypatch, agent: str) -> None:
+    fake = _FakeClient()
+    project = tmp_path / "proj"
+    project.mkdir()
+    monkeypatch.setattr(main, "_client", lambda: fake)
+    monkeypatch.setattr(s, "project_root", lambda p: p)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    argvs: list[list[str]] = []
+    real_run = subprocess.run
+
+    def fake_claude(argv, **kw):
+        if argv[0] == "claude":
+            argvs.append(argv)
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        return real_run(argv, **kw)
+
+    monkeypatch.setattr(s.subprocess, "run", fake_claude)
+    args = ["setup-agent", agent, "--project", str(project), "--write"]
+    if agent in s.TOKEN_ENV:
+        args += ["--env-file", ".envrc"]
+    result = CliRunner().invoke(main.app, args)
+    assert result.exit_code == 0, result.output
+    written = " ".join(" ".join(a) for a in argvs) + "".join(
+        f.read_text() for f in tmp_path.rglob("*") if f.is_file() and not f.is_symlink()
+    )
+    assert fake.creds.token not in written
+
+
+def test_setup_agent_refuses_the_removed_human_token_flag(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "_client", lambda: _FakeClient())
+    result = CliRunner().invoke(main.app, ["setup-agent", "codex", "--no-agent-token"])
+    assert result.exit_code != 0
 
 
 def test_setup_agent_preview_changes_nothing(tmp_path, monkeypatch) -> None:
