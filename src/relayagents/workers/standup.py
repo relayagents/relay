@@ -61,7 +61,7 @@ async def gather(
     draft = StandupDraft(user_id=user_id)
     for e in events:
         p = e.payload
-        if isinstance(p, ActionItemClosed):
+        if isinstance(p, ActionItemClosed) and p.resolution == "done":
             draft.done.append(f"{p.note or 'closed ' + p.item_id} [{e.id}]")
         elif isinstance(p, ReportPosted):
             draft.doing.append(f"{p.text} [{e.id}]")
