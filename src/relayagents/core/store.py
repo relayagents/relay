@@ -66,13 +66,8 @@ def parse_since(value: str | None, *, now: datetime | None = None) -> datetime |
     m = re.fullmatch(r"(\d+)\s*([smhdw])", value.strip())
     if m:
         n, unit = int(m.group(1)), m.group(2)
-        delta = {
-            "s": timedelta(seconds=n),
-            "m": timedelta(minutes=n),
-            "h": timedelta(hours=n),
-            "d": timedelta(days=n),
-            "w": timedelta(weeks=n),
-        }[unit]
+        seconds_per_unit = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+        delta = timedelta(seconds=n * seconds_per_unit[unit])
         return now - delta
     dt = datetime.fromisoformat(value)
     return dt if dt.tzinfo else dt.replace(tzinfo=UTC)

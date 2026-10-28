@@ -19,8 +19,15 @@ def test_parse_since() -> None:
     now = datetime(2026, 9, 3, tzinfo=UTC)
     assert parse_since("24h", now=now) == now - timedelta(hours=24)
     assert parse_since("7d", now=now) == now - timedelta(days=7)
+    assert parse_since("30m", now=now) == now - timedelta(minutes=30)
+    assert parse_since("2w", now=now) == now - timedelta(weeks=2)
     assert parse_since("2026-09-01T00:00:00+00:00") == datetime(2026, 9, 1, tzinfo=UTC)
     assert parse_since(None) is None
+
+
+def test_parse_since_large_seconds_window() -> None:
+    now = datetime(2026, 9, 3, tzinfo=UTC)
+    assert parse_since("1000000000s", now=now) == now - timedelta(seconds=1_000_000_000)
 
 
 async def test_append_query_and_projections(services: Services) -> None:
