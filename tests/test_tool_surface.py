@@ -157,6 +157,7 @@ async def test_state_changing_tools_are_audited(client: httpx.AsyncClient, team)
     ("filters", "expected_types"),
     [
         ({}, ["report.posted", "report.posted"]),
+        ({"since": "1000000000s"}, ["report.posted", "report.posted"]),
         ({"type": ["report.posted"]}, ["report.posted", "report.posted"]),
         ({"include_tool_calls": True}, ["report.posted", "tool.result"]),
         ({"type": ["tool.called", "tool.result"]}, ["tool.called", "tool.result"]),
