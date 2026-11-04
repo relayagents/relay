@@ -8,13 +8,13 @@ The embedder runs on the team's embedding model through Pydantic AI (any provide
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 import structlog
 
 from relayagents.core.config import Settings
 from relayagents.core.db import Database
 from relayagents.core.events import Event
-from relayagents.core.models import EMBEDDING_DIM
 from relayagents.core.protocols import Embedder
 from relayagents.core.store import EventStore, flatten_text
 
@@ -26,17 +26,18 @@ MAX_CHARS = 6000  # conservative for 8k-token models even on CJK/code
 class PydanticAIEmbedder:
     """``core.protocols.Embedder`` on ``pydantic_ai.embeddings.Embedder``."""
 
-    def __init__(self, model: object) -> None:
+    def __init__(self, model: object, *, dim: int) -> None:
         from pydantic_ai.embeddings import Embedder, EmbeddingSettings
 
         self.model_name = (
             model if isinstance(model, str) else getattr(model, "model_name", "custom")
         )
+        self.dim = dim  # RELAY_EMBEDDING_DIM: the width events.embedding is sized to
         self._embedder = Embedder(model, settings=EmbeddingSettings(truncate=True))  # type: ignore[arg-type]
 
     async def embed_query(self, text: str) -> list[float]:
         result = await self._embedder.embed_query(text[:MAX_CHARS])
-        return _check(list(result.embeddings[0]), self.model_name)
+        return self._check(list(result.embeddings[0]))
 
     async def embed_documents(self, texts: Sequence[str]) -> list[list[float] | None]:
         """One vector per input, ``None`` for inputs the model rejected. Providers that ignore
@@ -48,7 +49,7 @@ class PydanticAIEmbedder:
             chunk = clipped[i : i + BATCH]
             try:
                 result = await self._embedder.embed_documents(chunk)
-                out.extend(_check(list(v), self.model_name) for v in result.embeddings)
+                out.extend(self._check(list(v)) for v in result.embeddings)
             except ValueError:
                 raise  # wrong dimension: configuration error, not a bad input
             except Exception as exc:
@@ -56,7 +57,7 @@ class PydanticAIEmbedder:
                 for text in chunk:
                     try:
                         one = await self._embedder.embed_documents([text])
-                        out.append(_check(list(one.embeddings[0]), self.model_name))
+                        out.append(self._check(list(one.embeddings[0])))
                     except ValueError:
                         raise
                     except Exception as exc_one:
@@ -66,13 +67,14 @@ class PydanticAIEmbedder:
                         out.append(None)
         return out
 
-
-def _check(vec: list[float], model: str) -> list[float]:
-    if len(vec) != EMBEDDING_DIM:
-        raise ValueError(
-            f"embedding model {model!r} returns {len(vec)} dimensions; the events.embedding column is {EMBEDDING_DIM}. Pick a {EMBEDDING_DIM}-d model or add a migration."
-        )
-    return vec
+    def _check(self, vec: list[float]) -> list[float]:
+        if len(vec) != self.dim:
+            raise ValueError(
+                f"embedding model {self.model_name!r} returns {len(vec)} dimensions but "
+                f"RELAY_EMBEDDING_DIM is {self.dim}. Set RELAY_EMBEDDING_DIM={len(vec)} and run "
+                "`relay migrate` (relay-api runs it on start), or pick a model of that width."
+            )
+        return vec
 
 
 def make_embedder(settings: Settings) -> PydanticAIEmbedder | None:
@@ -93,8 +95,29 @@ def make_embedder(settings: Settings) -> PydanticAIEmbedder | None:
         reason = next(iter(str(exc).splitlines()), type(exc).__name__)
         log.warning("embeddings.disabled", model=name, reason=reason)
         return None
-    log.info("embeddings.enabled", model=name)
-    return PydanticAIEmbedder(name)
+    log.info("embeddings.enabled", model=name, dim=settings.embedding_dim)
+    return PydanticAIEmbedder(name, dim=settings.embedding_dim)
+
+
+async def disable_on_column_mismatch(services: Any) -> None:
+    """Turn the vector leg off when ``events.embedding`` is not RELAY_EMBEDDING_DIM wide.
+
+    Normally impossible (relay-api runs ``relay migrate`` before workers start), but a worker
+    started against an unmigrated column would otherwise fail every write and every query with a
+    database error. Off means recall degrades to the lexical leg, with one log line saying why.
+    """
+    from relayagents.core.embedding_column import embedding_dim_mismatch
+
+    if services.embedder is None:
+        return
+    try:
+        reason = await embedding_dim_mismatch(services.db, services.settings.embedding_dim)
+    except Exception as exc:  # DB not reachable yet: keep the embedder, writes will tell
+        log.warning("embeddings.column_unchecked", error=str(exc)[:200])
+        return
+    if reason:
+        log.error("embeddings.disabled", reason=reason)
+        services.embedder = None
 
 
 async def embed_events(db: Database, embedder: Embedder, events: Sequence[Event]) -> int:
