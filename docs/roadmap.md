@@ -22,9 +22,9 @@ Update this file when you finish or reprioritize something; it is the handoff be
    The `relay` CLI over the terminal tool is the integration; no MCP needed for Hermes.
 2. **Cheaper or local models for the non-coding work** (#25). Extraction, embeddings, standups, and
    digests do not need a frontier model. Both extraction and embeddings already accept an
-   OpenAI-compatible endpoint via `OPENAI_BASE_URL` (vLLM, Ollama) or a cheap API tier. The one
-   code change: make the embedding dimension configurable (currently fixed at 1536 in
-   `core/models.py`) with a migration, since local embedding models are often 768 or 1024.
+   OpenAI-compatible endpoint via `OPENAI_BASE_URL` (vLLM, Ollama) or a cheap API tier, and the
+   embedding width is configurable with `RELAY_EMBEDDING_DIM` (ADR-0012), so a 768-d or 1024-d
+   local model works.
    Add `docs/models.md`: which model where, and how to point at a local server.
 3. **First real boot** (#26) on a lab machine (Tailscale-only is fine while Google Workspace is
    deferred) or a small VPS. Run `scripts/bootstrap.sh`, upload `fixtures/transcript_sample.json`,

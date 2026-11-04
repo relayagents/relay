@@ -53,7 +53,17 @@ class Settings(BaseSettings):
     )
     embedding_model: str = Field(
         default="openai:text-embedding-3-small",
-        description="Pydantic AI embedding model, 1536-d (see EMBEDDING_DIM). Empty disables the vector leg.",
+        description="Pydantic AI embedding model. Empty disables the vector leg.",
+    )
+    embedding_dim: int = Field(
+        default=1536,
+        ge=1,
+        le=2000,  # pgvector's HNSW limit for `vector`; see core/embedding_column.py
+        description=(
+            "Width of the vectors embedding_model returns (1536 for text-embedding-3-small; local "
+            "models are often 768 or 1024). `relay migrate` resizes events.embedding to match and "
+            "drops stored vectors when it changes (ADR-0012). Shared by relay-api and workers."
+        ),
     )
 
     # Uploads

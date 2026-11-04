@@ -49,9 +49,9 @@ Adding a type: add the payload class and include it in `AnyPayload`, add a sampl
 
 | Table | Kind | Notes |
 |---|---|---|
-| `events` | **truth** | `seq` bigint cursor, `id` unique, JSON `payload`/`provenance`, `text_index` for lexical search, `embedding vector(1536)` (pgvector; JSON on SQLite), GIN full-text index on Postgres |
+| `events` | **truth** | `seq` bigint cursor, `id` unique, JSON `payload`/`provenance`, `text_index` for lexical search, `embedding vector(N)` with N = `RELAY_EMBEDDING_DIM`, default 1536, set by `relay migrate` (pgvector with an HNSW index; JSON on SQLite; ADR-0012), GIN full-text index on Postgres |
 | `action_items`, `decisions` | projection | rebuilt by `relay replay --rebuild-projections` |
-| pgvector embeddings (`events.embedding`) | projection | rebuilt by `relay replay --rebuild-graph` |
+| pgvector embeddings (`events.embedding`) | projection | rebuilt by `relay replay --rebuild-graph`; dropped when `relay migrate` changes the width |
 | knowledge graph | projection, **opt-in** | `RELAY_MEMORY_BACKEND=graphiti-kuzu`; off by default (ADR-0005) |
 | `users` | operational | identity, Slack/GitHub ids, timezone, `standup_mode`, `standup_time` |
 | `api_tokens` | operational | hashed tokens bound to an actor; scopes; expiry; revocation |

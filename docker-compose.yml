@@ -17,6 +17,7 @@ x-relay-env: &relay-env
   RELAY_SLACK_TEAM_CHANNEL: ${SLACK_TEAM_CHANNEL:-}
   RELAY_WORKSPACE_MCP_URL: ${GOOGLE_OAUTH_CLIENT_ID:+http://workspace-mcp:8000/mcp}   # on only with Google OAuth set up
   RELAY_SANDBOX_IMAGE: ${RELAY_SANDBOX_IMAGE:-ghcr.io/relayagents/relay-sandbox:latest}
+  RELAY_EMBEDDING_DIM: ${RELAY_EMBEDDING_DIM:-1536}   # relay-api sizes events.embedding to it on start; workers check it (ADR-0012)
 
 # The team model key. Extraction, embeddings, digests, graph: workers only.
 x-team-keys: &team-keys

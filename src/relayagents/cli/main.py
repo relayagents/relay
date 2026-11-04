@@ -577,6 +577,7 @@ def replay(
     Runs where the team key and graph volume live: `docker compose exec relay-workers relay replay`.
     """
     from relayagents.api.app import build_services
+    from relayagents.connectors.memory.embeddings import disable_on_column_mismatch
     from relayagents.core import projections
     from relayagents.core.config import get_settings
     from relayagents.core.store import EventStore
@@ -587,6 +588,7 @@ def replay(
 
     async def run() -> None:
         services = build_services(get_settings(), role="worker")
+        await disable_on_column_mismatch(services)
         if rebuild_projections:
             async with services.db.session() as session:
                 n = await projections.rebuild(session, EventStore(session))
@@ -631,15 +633,39 @@ def worker(
 
 @app.command()
 def migrate(revision: str = "head") -> None:
-    """Apply Alembic migrations."""
+    """Apply Alembic migrations, then size events.embedding to RELAY_EMBEDDING_DIM (ADR-0012).
+
+    Changing the width drops stored vectors (derived data); the workers re-embed the log.
+    """
     from alembic import command
     from alembic.config import Config
+
+    from relayagents.core.config import get_settings
+    from relayagents.core.db import Database
+    from relayagents.core.embedding_column import ensure_embedding_dim
 
     cfg = Config(str(Path(__file__).resolve().parents[3] / "alembic.ini"))
     cfg.set_main_option(
         "script_location", str(Path(__file__).resolve().parents[1] / "core" / "migrations")
     )
     command.upgrade(cfg, revision)
+
+    settings = get_settings()
+    if settings.is_sqlite or revision != "head":
+        return  # SQLite has no width; a partial upgrade may not have the column yet
+
+    async def size_column() -> bool:
+        db = Database(settings.database_url)
+        try:
+            return await ensure_embedding_dim(db, settings.embedding_dim)
+        finally:
+            await db.dispose()
+
+    if asyncio.run(size_column()):
+        typer.echo(
+            f"events.embedding resized to vector({settings.embedding_dim}); stored vectors were "
+            "dropped and the workers will re-embed (`relay replay --rebuild-graph` does it now)"
+        )
 
 
 @app.command()
