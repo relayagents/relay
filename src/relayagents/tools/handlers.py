@@ -13,6 +13,7 @@ from relayagents.api.a2a_broker import broker
 from relayagents.api.a2a_broker.types import Message
 from relayagents.core import approvals
 from relayagents.core.events import (
+    EVENT_TYPES,
     ActionItemClosed,
     Actor,
     Event,
@@ -129,6 +130,9 @@ async def items(ctx: ToolContext, inp: ItemsInput) -> ItemsOutput:
 async def events(ctx: ToolContext, inp: EventsInput) -> EventsOutput:
     actor = ctx.resolve_user(inp.actor)
     types = list(inp.type) if inp.type else None
+    if not inp.include_tool_calls and not (types and any(t.startswith("tool.") for t in types)):
+        # Filter in SQL so audit events do not consume the requested result limit.
+        types = [t for t in (types or EVENT_TYPES) if not t.startswith("tool.")]
     # A bare user id ("grace") means the human and all of their agents; "grace.hermes" is exact.
     is_user = bool(actor) and "." not in actor
     async with ctx.db.session() as session:
@@ -142,8 +146,6 @@ async def events(ctx: ToolContext, inp: EventsInput) -> EventsOutput:
             limit=inp.limit,
             descending=True,
         )
-    if not inp.include_tool_calls and not (types and any(t.startswith("tool.") for t in types)):
-        found = [e for e in found if not e.type.startswith("tool.")]
     return EventsOutput(events=list(reversed(found)))
 
 
