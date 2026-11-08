@@ -19,6 +19,8 @@ build/
 data/
 var/
 .relay/
+# Per-machine compose tweaks (docker compose reads this file automatically if present).
+docker-compose.override.yml
 
 # Never commit real recordings or transcripts. Fixtures live in fixtures/ and are synthetic.
 *.m4a
