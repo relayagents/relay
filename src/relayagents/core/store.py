@@ -58,19 +58,38 @@ def event_summary(event: Event) -> str:
     return f"[{event.type}]"
 
 
+_SECONDS_PER_UNIT = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+
 def parse_since(value: str | None, *, now: datetime | None = None) -> datetime | None:
-    """Accept ISO timestamps or relative windows like ``24h``, ``7d``, ``30m``."""
+    """Accept ISO timestamps or relative windows like ``24h``, ``7d``, ``30m``.
+
+    ``None`` means no lower bound, which is also what a window reaching back past year 1 means.
+    Anything else raises ``ValueError`` with a message fit for the caller.
+    """
     if not value:
         return None
     now = now or datetime.now(UTC)
     m = re.fullmatch(r"(\d+)\s*([smhdw])", value.strip())
     if m:
         n, unit = int(m.group(1)), m.group(2)
-        seconds_per_unit = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
-        delta = timedelta(seconds=n * seconds_per_unit[unit])
-        return now - delta
-    dt = datetime.fromisoformat(value)
+        try:
+            return now - timedelta(seconds=n * _SECONDS_PER_UNIT[unit])
+        except OverflowError:
+            return None
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        raise ValueError(
+            f"since must be an ISO timestamp or a window like 24h or 7d, got {value!r}"
+        ) from None
     return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+def check_since(value: str | None) -> str | None:
+    """Pydantic ``AfterValidator``: reject a bad ``since`` as a 422, not a 500 at query time."""
+    parse_since(value)
+    return value
 
 
 def row_to_event(row: EventRow) -> Event:

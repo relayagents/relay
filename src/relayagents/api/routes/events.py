@@ -5,13 +5,13 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import AfterValidator, BaseModel
 
 from relayagents.api.auth import events_read_principal, events_write_principal, get_services
 from relayagents.core.events import EVENT_TYPES, Event
 from relayagents.core.indexing import index_later
 from relayagents.core.projections import apply as project
-from relayagents.core.store import EventStore, parse_since
+from relayagents.core.store import EventStore, check_since, parse_since
 from relayagents.tools.context import Principal, Services
 
 router = APIRouter(prefix="/v1/events", tags=["events"])
@@ -81,7 +81,7 @@ async def append_event(
 async def list_events(
     _: Annotated[Principal, Depends(events_read_principal)],
     services: Annotated[Services, Depends(get_services)],
-    since: str | None = None,
+    since: Annotated[str | None, AfterValidator(check_since)] = None,
     type: Annotated[list[str] | None, Query()] = None,
     thread: str | None = None,
     actor: str | None = None,
