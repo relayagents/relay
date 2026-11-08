@@ -10,10 +10,12 @@ import pytest
 from relayagents.api.routes.users import AddUserIn, create_user_with_tokens
 from relayagents.connectors.memory.embeddings import PydanticAIEmbedder, embed_events
 from relayagents.connectors.slack.chat import RecordingChatApp
+from relayagents.core.config import Settings
 from relayagents.core.events import Actor
-from relayagents.core.models import EMBEDDING_DIM
 from relayagents.tools.rest import TOOLS_PREFIX
 from tests.conftest import auth
+
+EMBEDDING_DIM = Settings.model_fields["embedding_dim"].default
 
 
 async def test_add_user_slack_clash_is_409_and_reissue_updates_bindings(services, team) -> None:  # type: ignore[no-untyped-def]
@@ -115,6 +117,7 @@ class FlakyModel:
 async def test_embedder_falls_back_per_item_on_batch_failure(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     emb = PydanticAIEmbedder.__new__(PydanticAIEmbedder)
     emb.model_name = "flaky"
+    emb.dim = EMBEDDING_DIM
     emb._embedder = FlakyModel()  # type: ignore[assignment]
     vecs = await emb.embed_documents(["fine", "POISON", "also fine", "x" * 20000])
     assert [v is None for v in vecs] == [False, True, False, False]
@@ -143,6 +146,7 @@ async def test_embed_events_skips_rejected_inputs(services) -> None:  # type: ig
         await session.commit()
     emb = PydanticAIEmbedder.__new__(PydanticAIEmbedder)
     emb.model_name = "flaky"
+    emb.dim = EMBEDDING_DIM
     emb._embedder = FlakyModel()  # type: ignore[assignment]
     assert await embed_events(services.db, emb, [a, b]) == 1
 

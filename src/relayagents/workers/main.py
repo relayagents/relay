@@ -25,9 +25,11 @@ log = structlog.get_logger()
 
 async def startup(ctx: dict[str, Any]) -> None:
     from relayagents.api.app import build_services
+    from relayagents.connectors.memory.embeddings import disable_on_column_mismatch
 
     settings = get_settings()
-    ctx["services"] = build_services(settings, role="worker")
+    ctx["services"] = services = build_services(settings, role="worker")
+    await disable_on_column_mismatch(services)
     log.info(
         "workers.started",
         extraction_model=settings.extraction_model,

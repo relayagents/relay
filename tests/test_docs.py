@@ -81,3 +81,44 @@ def test_connect_guide_matches_setup_agent() -> None:
     skill = SKILL.read_text()
     assert "docs/connect-your-agent.md" in skill
     assert f"<{'|'.join(agent_setup.PROJECT_AGENTS)}>" in skill
+
+
+MODEL_SERVER_VARS = ("OLLAMA_BASE_URL", "VLLM_BASE_URL", "VLLM_API_KEY")
+
+
+def _compose_block(compose: str, header: str) -> str:
+    """The lines under ``header`` up to the next line at the same or lower indent."""
+    start = compose.index(header + "\n") + len(header) + 1
+    indent = len(header) - len(header.lstrip()) + 1
+    lines = []
+    for line in compose[start:].splitlines():
+        if line.strip() and len(line) - len(line.lstrip()) < indent:
+            break
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def test_model_settings_are_documented() -> None:
+    """docs/models.md covers every model setting and every local model server variable."""
+    text = (DOCS / "models.md").read_text()
+    env_example = (ROOT / ".env.example").read_text()
+    for var in ("RELAY_EXTRACTION_MODEL", "RELAY_EMBEDDING_MODEL", "RELAY_EMBEDDING_DIM"):
+        assert f"`{var}" in text, var
+    for var in MODEL_SERVER_VARS:
+        assert f"`{var}`" in text, var
+        assert re.search(rf"^{var}=$", env_example, flags=re.M), var
+
+
+def test_model_endpoints_reach_workers_only() -> None:
+    """Model keys and model server URLs go to relay-workers, never relay-api (ADR-0002)."""
+    compose = (ROOT / "docker-compose.yml").read_text()
+    shared = _compose_block(compose, "x-relay-env: &relay-env")
+    team = _compose_block(compose, "x-team-keys: &team-keys")
+    api = _compose_block(compose, "  relay-api:")
+    workers = _compose_block(compose, "  relay-workers:")
+    for var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", *MODEL_SERVER_VARS):
+        assert f"  {var}: " in team, var
+        assert var not in shared and var not in api, var
+    assert "*team-keys" in workers and "*team-keys" not in api
+    # Set-but-empty OPENAI_BASE_URL gives the OpenAI client an empty URL (docs/models.md).
+    assert not re.search(r"^\s+OPENAI_BASE_URL:", compose, flags=re.M)

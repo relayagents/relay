@@ -12,12 +12,14 @@ from relayagents.connectors.memory.embeddings import PydanticAIEmbedder, embed_e
 from relayagents.connectors.memory.search import semantic_search
 from relayagents.core.config import Settings
 from relayagents.core.events import Actor, DecisionMade, Event, ReportPosted
-from relayagents.core.models import EMBEDDING_DIM, EventRow
+from relayagents.core.models import EventRow
 from relayagents.core.protocols import MemoryHit
 from relayagents.core.store import EventStore
 from relayagents.tools.rest import TOOLS_PREFIX
 from relayagents.workers.jobs import rebuild_graph, semantic_recall
 from tests.conftest import auth
+
+EMBEDDING_DIM = Settings.model_fields["embedding_dim"].default
 
 
 class FakeMemory:
@@ -108,13 +110,37 @@ def test_make_embedder_degrades_on_a_provider_error(monkeypatch, exc: Exception)
 
 
 async def test_embedder_rejects_wrong_dimension() -> None:
-    emb = PydanticAIEmbedder(TestEmbeddingModel(dimensions=8))
-    with pytest.raises(ValueError, match="8 dimensions"):
+    emb = PydanticAIEmbedder(TestEmbeddingModel(dimensions=8), dim=EMBEDDING_DIM)
+    with pytest.raises(ValueError, match="8 dimensions but RELAY_EMBEDDING_DIM is 1536"):
         await emb.embed_query("x")
+    with pytest.raises(ValueError, match="Set RELAY_EMBEDDING_DIM=8"):
+        await emb.embed_documents(["x"])
+
+
+async def test_embedder_accepts_the_configured_width() -> None:
+    """A local 768-d model works once RELAY_EMBEDDING_DIM says 768 (ADR-0012)."""
+    emb = PydanticAIEmbedder(TestEmbeddingModel(dimensions=768), dim=768)
+    assert len(await emb.embed_query("x")) == 768
+    assert [len(v or []) for v in await emb.embed_documents(["a", "b"])] == [768, 768]
+
+
+def test_make_embedder_uses_the_configured_width(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")  # building the client makes no request
+    settings = Settings(
+        embedding_model="openai:text-embedding-3-small", embedding_dim=1024, _env_file=None
+    )  # type: ignore[call-arg]
+    emb = make_embedder(settings)
+    assert emb is not None and emb.dim == 1024
+
+
+@pytest.mark.parametrize("dim", [0, 2001])
+def test_embedding_dim_stays_within_the_hnsw_limit(dim: int) -> None:
+    with pytest.raises(ValueError, match="embedding_dim"):
+        Settings(embedding_dim=dim, _env_file=None)  # type: ignore[call-arg]
 
 
 async def test_embedder_batches_and_truncates() -> None:
-    emb = PydanticAIEmbedder(TestEmbeddingModel(dimensions=EMBEDDING_DIM))
+    emb = PydanticAIEmbedder(TestEmbeddingModel(dimensions=EMBEDDING_DIM), dim=EMBEDDING_DIM)
     vecs = await emb.embed_documents(["a" * 20000] * 250)  # > one batch, > token limit per input
     assert len(vecs) == 250 and all(len(v) == EMBEDDING_DIM for v in vecs)
 
