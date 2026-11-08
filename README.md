@@ -123,7 +123,7 @@ The same nine operations exist as MCP tools, `relay` subcommands, and `POST /v1/
 
 1. [`CLAUDE.md`](CLAUDE.md): the non-negotiables, the dev loop, and how we work. Coding agents read it automatically; read it yourself first.
 2. [`CONTRIBUTING.md`](CONTRIBUTING.md): the PR workflow and etiquette.
-3. [docs/architecture.md](docs/architecture.md), [docs/data-model.md](docs/data-model.md), [docs/permissions.md](docs/permissions.md), [docs/protocols.md](docs/protocols.md), [docs/agent-contract.md](docs/agent-contract.md).
+3. [docs/architecture.md](docs/architecture.md), [docs/data-model.md](docs/data-model.md), [docs/permissions.md](docs/permissions.md), [docs/protocols.md](docs/protocols.md), [docs/agent-contract.md](docs/agent-contract.md), [docs/models.md](docs/models.md).
 4. [docs/adr](docs/adr): why things are the way they are. Read 0001, 0002, 0005, and 0009 first.
 5. [docs/roadmap.md](docs/roadmap.md): what's next, in order, and what's parked.
 
