@@ -184,3 +184,16 @@ async def test_events_limit_counts_visible_events(
     assert [event["type"] for event in events] == expected_types
     if expected_types == ["report.posted", "report.posted"]:
         assert [event["id"] for event in events] == report_ids[-2:]
+
+
+@pytest.mark.parametrize("since", ["99999999999w", "not-a-date"])
+async def test_bad_or_huge_since_never_500s(client, team, since: str) -> None:  # type: ignore[no-untyped-def]
+    """A window past year 1 means everything; garbage is a 422 on REST and the tool endpoint."""
+    headers = auth(team["ada"]["human"])
+    expected = 200 if since[0].isdigit() else 422
+    r = await client.get("/v1/events", params={"since": since}, headers=headers)
+    assert r.status_code == expected, r.text
+    r = await client.post(f"{TOOLS_PREFIX}/events", json={"since": since}, headers=headers)
+    assert r.status_code == expected, r.text
+    r = await client.post(f"{TOOLS_PREFIX}/decisions", json={"since": since}, headers=headers)
+    assert r.status_code == expected, r.text
