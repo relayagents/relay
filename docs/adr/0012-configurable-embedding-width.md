@@ -7,7 +7,7 @@
 `events.embedding` was created as `vector(1536)` by migration 0001, and `EMBEDDING_DIM = 1536` in
 `core/models.py` was checked against every vector the embedder returned. That fits OpenAI's
 `text-embedding-3-small` and nothing else. Local embedding models served through Ollama or vLLM
-(the cheaper route in roadmap item 2, issue #25) usually return 768 or 1024 dimensions, so a team
+(the cheaper route in issue #25; see [models.md](../models.md)) usually return 768 or 1024 dimensions, so a team
 pointing `OPENAI_BASE_URL` at one got an error on every embed and lost the vector leg of `recall`.
 
 Three facts shape the fix:
