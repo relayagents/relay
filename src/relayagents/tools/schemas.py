@@ -4,12 +4,13 @@ JSON Schema (MCP), CLI options, and OpenAPI from them."""
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from relayagents.core.events import Event
 from relayagents.core.protocols import MemoryHit
+from relayagents.core.store import check_since
 
 
 class ToolInput(BaseModel):
@@ -71,7 +72,7 @@ class ItemsOutput(ToolOutput):
 
 
 class EventsInput(ToolInput):
-    since: str | None = Field(
+    since: Annotated[str | None, AfterValidator(check_since)] = Field(
         default="24h", description="ISO timestamp or relative window like 24h, 7d."
     )
     type: list[str] | None = Field(
@@ -177,7 +178,7 @@ class Decision(BaseModel):
 
 class DecisionsInput(ToolInput):
     topic: str | None = Field(default=None, description="Substring match on topic or statement.")
-    since: str | None = None
+    since: Annotated[str | None, AfterValidator(check_since)] = None
     limit: int = Field(default=50, ge=1, le=200)
 
 

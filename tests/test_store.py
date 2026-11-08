@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from relayagents.core import projections
 from relayagents.core.events import (
     ActionItemClosed,
@@ -19,8 +21,25 @@ def test_parse_since() -> None:
     now = datetime(2026, 9, 3, tzinfo=UTC)
     assert parse_since("24h", now=now) == now - timedelta(hours=24)
     assert parse_since("7d", now=now) == now - timedelta(days=7)
+    assert parse_since("30m", now=now) == now - timedelta(minutes=30)
+    assert parse_since("2w", now=now) == now - timedelta(weeks=2)
     assert parse_since("2026-09-01T00:00:00+00:00") == datetime(2026, 9, 1, tzinfo=UTC)
     assert parse_since(None) is None
+
+
+def test_parse_since_window_past_year_one_means_no_lower_bound() -> None:
+    assert parse_since("99999999999w") is None
+    assert parse_since("999999999999999999999d") is None
+
+
+def test_parse_since_rejects_garbage_with_a_clear_message() -> None:
+    with pytest.raises(ValueError, match="ISO timestamp or a window like 24h"):
+        parse_since("not-a-date")
+
+
+def test_parse_since_large_seconds_window() -> None:
+    now = datetime(2026, 9, 3, tzinfo=UTC)
+    assert parse_since("1000000000s", now=now) == now - timedelta(seconds=1_000_000_000)
 
 
 async def test_append_query_and_projections(services: Services) -> None:

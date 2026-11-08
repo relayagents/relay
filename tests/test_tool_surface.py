@@ -151,3 +151,49 @@ async def test_state_changing_tools_are_audited(client: httpx.AsyncClient, team)
         await client.post(f"{TOOLS_PREFIX}/events", json={"since": "1h"}, headers=auth(tok))
     ).json()["events"]
     assert all(not e["type"].startswith("tool.") for e in shown)
+
+
+@pytest.mark.parametrize(
+    ("filters", "expected_types"),
+    [
+        ({}, ["report.posted", "report.posted"]),
+        ({"since": "1000000000s"}, ["report.posted", "report.posted"]),
+        ({"type": ["report.posted"]}, ["report.posted", "report.posted"]),
+        ({"include_tool_calls": True}, ["report.posted", "tool.result"]),
+        ({"type": ["tool.called", "tool.result"]}, ["tool.called", "tool.result"]),
+        ({"type": ["report.posted", "tool.result"]}, ["report.posted", "tool.result"]),
+    ],
+)
+async def test_events_limit_counts_visible_events(
+    client: httpx.AsyncClient, team, filters, expected_types
+) -> None:  # type: ignore[no-untyped-def]
+    headers = auth(team["grace"]["agent"])
+    report_ids = []
+    for text in ("first update", "second update", "latest update"):
+        response = await client.post(f"{TOOLS_PREFIX}/report", json={"text": text}, headers=headers)
+        assert response.status_code == 200, response.text
+        report_ids.append(response.json()["event_id"])
+
+    response = await client.post(
+        f"{TOOLS_PREFIX}/events",
+        json={"actor": "me", "limit": 2, **filters},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    events = response.json()["events"]
+    assert [event["type"] for event in events] == expected_types
+    if expected_types == ["report.posted", "report.posted"]:
+        assert [event["id"] for event in events] == report_ids[-2:]
+
+
+@pytest.mark.parametrize("since", ["99999999999w", "not-a-date"])
+async def test_bad_or_huge_since_never_500s(client, team, since: str) -> None:  # type: ignore[no-untyped-def]
+    """A window past year 1 means everything; garbage is a 422 on REST and the tool endpoint."""
+    headers = auth(team["ada"]["human"])
+    expected = 200 if since[0].isdigit() else 422
+    r = await client.get("/v1/events", params={"since": since}, headers=headers)
+    assert r.status_code == expected, r.text
+    r = await client.post(f"{TOOLS_PREFIX}/events", json={"since": since}, headers=headers)
+    assert r.status_code == expected, r.text
+    r = await client.post(f"{TOOLS_PREFIX}/decisions", json={"since": since}, headers=headers)
+    assert r.status_code == expected, r.text

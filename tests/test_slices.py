@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import httpx
+import pytest
 
 from relayagents.api.app import build_services
 from relayagents.core import projections
@@ -122,6 +123,32 @@ async def test_digest_quiet_and_busy(services, team, client: httpx.AsyncClient) 
     ev = await post_digest(services)
     assert ev.payload.quiet is False and ev.payload.shipped == ["shipped the cache (grace)"]  # type: ignore[attr-defined]
     assert ev.provenance.parent_event_ids
+
+
+@pytest.mark.parametrize("resolution", ["done", "wont_do", "duplicate"])
+async def test_standup_only_counts_completed_items_as_done(
+    client: httpx.AsyncClient, team, resolution: str
+) -> None:  # type: ignore[no-untyped-def]
+    headers = auth(team["grace"]["agent"])
+    response = await client.post(
+        "/v1/events",
+        json={
+            "payload": {
+                "type": "action_item.closed",
+                "item_id": "item_closed",
+                "resolution": resolution,
+                "note": "Cache work",
+            }
+        },
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    event_id = response.json()["id"]
+    response = await client.get("/v1/standups/draft", headers=headers)
+    assert response.status_code == 200, response.text
+    draft = response.json()
+    assert draft["done"] == ([f"Cache work [{event_id}]"] if resolution == "done" else [])
+    assert draft["cited_event_ids"] == ([event_id] if resolution == "done" else [])
 
 
 async def test_replay_rebuilds_projections(services, team, client: httpx.AsyncClient) -> None:  # type: ignore[no-untyped-def]
