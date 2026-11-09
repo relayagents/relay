@@ -242,3 +242,53 @@ def test_digest_says_each_thing_once() -> None:
         "eval doc started (grace)",
         "reviewing #12 [evt_from_last_week] (grace)",
     ]
+
+
+def test_digest_dedupe_never_hides_what_it_did_not_show() -> None:
+    # Security review of the dedupe above: a teammate's closure must not hide someone's report, and
+    # a standup line may be skipped only when its own cited event already has a line here.
+    from datetime import UTC, datetime, timedelta
+
+    from relayagents.core.events import (
+        ActionItemClosed,
+        Actor,
+        DecisionMade,
+        Event,
+        ReportPosted,
+        StandupPosted,
+    )
+    from relayagents.workers.digest import build_digest
+
+    grace, ada = Actor.agent("grace.claude-code"), Actor.human("ada")
+    report = Event.new(
+        ReportPosted(text="half the cache", item_id="item_c"), actor=grace, source="api"
+    )
+    closed_by_ada = Event.new(
+        ActionItemClosed(item_id="item_c", note="ada closed it"), actor=ada, source="api"
+    )
+    decision = Event.new(
+        DecisionMade(decision_id="dec_1", statement="use pgvector"), actor=ada, source="api"
+    )
+    standup = Event.new(
+        StandupPosted(
+            user_id="grace",
+            mode="auto",
+            doing=[f"talked pgvector [{decision.id}]", f"claims ada's line [{closed_by_ada.id}]"],
+            cited_event_ids=[decision.id],
+        ),
+        actor=grace,
+        source="api",
+    )
+    now = datetime.now(UTC)
+    d = build_digest(
+        [report, closed_by_ada, decision, standup],
+        window_start=now - timedelta(days=1),
+        window_end=now,
+    )
+    assert d.shipped == ["ada closed it (ada)"]
+    assert d.in_progress == [
+        "half the cache (grace)",
+        f"talked pgvector [{decision.id}] (grace)",
+        f"claims ada's line [{closed_by_ada.id}] (grace)",
+    ]
+    assert {report.id, closed_by_ada.id, decision.id, standup.id} <= set(d.cited_event_ids)
