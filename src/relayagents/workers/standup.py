@@ -53,18 +53,26 @@ class StandupDraft(BaseModel):
 def reports_closed_as_done(events: list[Event]) -> set[str]:
     """Reports that `report --close-item` turned into a done closure.
 
-    That tool call writes the report and then the closure, citing the report as its parent, so
-    the closure already says the same thing under Done/Shipped. Matching on that link, by the same
-    author, leaves earlier progress reports on the item, and anyone else's, where they are.
+    That tool call writes the report and then the closure, naming the report as its one parent,
+    so the closure already says the same thing under Done/Shipped. Only that exact pair matches:
+    one parent, the same author, the same item. Callers can publish closures with provenance of
+    their choosing, so the author check keeps anyone from hiding a teammate's report, and the
+    item check keeps a closure from hiding a report about something else.
     """
-    authors = {e.id: e.actor.user_id for e in events if isinstance(e.payload, ReportPosted)}
-    return {
-        parent
+    reports = {
+        e.id: (e.actor.user_id, e.payload.item_id)
         for e in events
-        if isinstance(e.payload, ActionItemClosed) and e.payload.resolution == "done"
-        for parent in e.provenance.parent_event_ids
-        if parent in authors and authors[parent] == e.actor.user_id
+        if isinstance(e.payload, ReportPosted) and e.payload.item_id
     }
+    out = set()
+    for e in events:
+        p = e.payload
+        if not (isinstance(p, ActionItemClosed) and p.resolution == "done"):
+            continue
+        parents = e.provenance.parent_event_ids
+        if len(parents) == 1 and reports.get(parents[0]) == (e.actor.user_id, p.item_id):
+            out.add(parents[0])
+    return out
 
 
 async def gather(
