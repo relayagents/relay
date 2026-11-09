@@ -81,3 +81,20 @@ def test_connect_guide_matches_setup_agent() -> None:
     skill = SKILL.read_text()
     assert "docs/connect-your-agent.md" in skill
     assert f"<{'|'.join(agent_setup.PROJECT_AGENTS)}>" in skill
+
+
+def test_slack_manifest_grants_what_the_code_uses() -> None:
+    # The README's "Connect Slack" creates the app from this file, so it has to match the code:
+    # chat.postMessage/postEphemeral/update (chat:write), conversations.open for DMs (im:write),
+    # the app_mention handler, Block Kit buttons (interactivity), and Socket Mode (ADR-0007).
+    manifest = json.loads((ROOT / "deploy" / "slack" / "manifest.json").read_text())
+    assert sorted(manifest["oauth_config"]["scopes"]["bot"]) == [
+        "app_mentions:read",
+        "chat:write",
+        "im:write",
+    ]
+    settings = manifest["settings"]
+    assert settings["socket_mode_enabled"] and settings["interactivity"]["is_enabled"]
+    assert settings["event_subscriptions"]["bot_events"] == ["app_mention"]
+    source = "\n".join(p.read_text() for p in (ROOT / "src").rglob("*.py"))
+    assert '@app.event("app_mention")' in source and "conversations_open(" in source
