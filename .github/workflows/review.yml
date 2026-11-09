@@ -3,7 +3,9 @@
 # code. PRs from forks are skipped so they cannot reach the key. Re-run a review by applying the
 # `outerloop:review` label; silence one PR with `outerloop:no-review`. Docs: outerloop/docs/reviewer.md.
 #
-# Backend: hermes on the OpenAI provider with gpt-5.6-terra (provider-native id, no `openai/` prefix).
+# Backend: hermes on the OpenAI provider with gpt-6.1-terra (provider-native id, no `openai/` prefix).
+# gpt-6.1-terra replaced gpt-5.6-terra: about half the price per token and stronger on OpenAI's
+# agent benchmarks. This file is the only place the model is named; docs refer to "outerloop".
 # Needs the repository secret OPENAI_REVIEWER_KEY (a spend-capped key used only for reviews).
 # Without it every PR gets a visible "could not run" stub, by design.
 name: outerloop-review
@@ -28,7 +30,7 @@ jobs:
       bot_login: relay-bot   # PRs by this login are never reviewed; we have no bot yet, so everything is reviewed
       backend: hermes
       hermes_provider: openai
-      model: gpt-5.6-terra
+      model: gpt-6.1-terra
       reviewer_ref: v0.1.0.dev3
     secrets:
       openai_reviewer_key: ${{ secrets.OPENAI_REVIEWER_KEY }}
