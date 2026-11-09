@@ -144,6 +144,8 @@ services:
 
   workspace-mcp:
     # Google Workspace via taylorwilsdon/google_workspace_mcp, multi-user OAuth 2.1. Relay never sees Google tokens.
+    # It exits without GOOGLE_OAUTH_CLIENT_ID, so it runs only with COMPOSE_PROFILES=workspace (see .env.example).
+    profiles: ["workspace"]
     image: ${WORKSPACE_MCP_IMAGE:-ghcr.io/taylorwilsdon/google_workspace_mcp:latest}
     environment:
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
