@@ -309,3 +309,27 @@ def test_digest_dedupe_never_hides_what_it_did_not_show() -> None:
         f"claims ada's line [{closed_by_ada.id}] (grace)",
     ]
     assert {report.id, closed_by_ada.id, decision.id, standup.id} <= set(d.cited_event_ids)
+
+
+def test_a_closure_folds_only_its_own_report_on_the_same_item() -> None:
+    # Security review: closures published over POST /v1/events carry caller-chosen provenance, so
+    # the match also needs the same item and exactly one parent.
+    from relayagents.core.events import ActionItemClosed, Actor, Event, Provenance, ReportPosted
+    from relayagents.workers.standup import reports_closed_as_done
+
+    grace = Actor.agent("grace.claude-code")
+    on_c = Event.new(ReportPosted(text="c done", item_id="item_c"), actor=grace, source="api")
+    on_d = Event.new(ReportPosted(text="d progress", item_id="item_d"), actor=grace, source="api")
+    loose = Event.new(ReportPosted(text="no item"), actor=grace, source="api")
+
+    def close(item: str, *parents: str) -> Event:
+        return Event.new(
+            ActionItemClosed(item_id=item),
+            actor=grace,
+            source="api",
+            provenance=Provenance(parent_event_ids=list(parents)),
+        )
+
+    events = [on_c, on_d, loose, close("item_c", on_c.id), close("item_c", on_d.id)]
+    events += [close("item_c", loose.id), close("item_d", on_d.id, loose.id)]
+    assert reports_closed_as_done(events) == {on_c.id}
