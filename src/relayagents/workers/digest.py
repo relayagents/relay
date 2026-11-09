@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 
 from relayagents.core.events import (
@@ -27,21 +28,33 @@ def build_digest(
     events: list[Event], *, window_start: datetime, window_end: datetime
 ) -> DigestPosted:
     shipped, in_progress, blockers, needed, cited = [], [], [], [], []
+    # `report --close-item` writes a report and a closure: the item shipped, so its report is not
+    # also in progress.
+    closed = {e.payload.item_id for e in events if isinstance(e.payload, ActionItemClosed)}
+    in_window = {e.id for e in events}
+
+    def from_standup(lines: list[str]) -> list[str]:
+        # A standup line ends with the event it cites; when that event is in this window it was
+        # already counted on its own, in the digest's wording.
+        return [x for x in lines if _cited_id(x) not in in_window]
+
     for e in events:
         p = e.payload
         if isinstance(p, ActionItemClosed) and p.resolution == "done":
             shipped.append(f"{p.note or p.item_id} ({e.actor.user_id})")
             cited.append(e.id)
         elif isinstance(p, ReportPosted):
+            if p.item_id in closed:
+                continue
             in_progress.append(f"{p.text} ({e.actor.user_id})")
             cited.append(e.id)
         elif isinstance(p, ActionItemUpdated) and p.status == "blocked":
             blockers.append(f"{p.note or p.item_id}")
             cited.append(e.id)
         elif isinstance(p, StandupPosted):
-            shipped += [f"{d} ({p.user_id})" for d in p.done]
-            in_progress += [f"{d} ({p.user_id})" for d in p.doing]
-            blockers += list(p.blocked)
+            shipped += [f"{d} ({p.user_id})" for d in from_standup(p.done)]
+            in_progress += [f"{d} ({p.user_id})" for d in from_standup(p.doing)]
+            blockers += from_standup(p.blocked)
             cited.append(e.id)
         elif isinstance(p, QuestionOpened) and not p.asked_of:
             needed.append(p.text)
@@ -59,6 +72,14 @@ def build_digest(
         cited_event_ids=cited,
         quiet=quiet,
     )
+
+
+_CITED = re.compile(r"\[(evt_[A-Za-z0-9]+)\]\s*$")
+
+
+def _cited_id(line: str) -> str | None:
+    m = _CITED.search(line)
+    return m.group(1) if m else None
 
 
 def _dedupe(xs: list[str]) -> list[str]:

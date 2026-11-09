@@ -198,3 +198,47 @@ async def test_standup_lists_a_report_that_closed_its_item_only_as_done(
     assert [d.split(" [")[0] for d in draft["done"]] == ["cache shipped"]
     assert [d.split(" [")[0] for d in draft["doing"]] == ["started on the eval doc"]
     assert draft["user_id"] == "grace"
+
+
+def test_digest_says_each_thing_once() -> None:
+    # First compose boot: `report --close-item` listed one line under Shipped and In progress, and
+    # a posted standup repeats the events it cites, in a form _dedupe cannot match.
+    from datetime import UTC, datetime, timedelta
+
+    from relayagents.core.events import (
+        ActionItemClosed,
+        Actor,
+        Event,
+        ReportPosted,
+        StandupPosted,
+    )
+    from relayagents.workers.digest import build_digest
+
+    agent = Actor.agent("grace.claude-code")
+    report = Event.new(
+        ReportPosted(text="cache shipped", item_id="item_c"), actor=agent, source="api"
+    )
+    closed = Event.new(
+        ActionItemClosed(item_id="item_c", note="cache shipped"), actor=agent, source="api"
+    )
+    other = Event.new(ReportPosted(text="eval doc started"), actor=agent, source="api")
+    standup = Event.new(
+        StandupPosted(
+            user_id="grace",
+            mode="auto",
+            done=[f"cache shipped [{closed.id}]"],
+            doing=[f"eval doc started [{other.id}]", "reviewing #12 [evt_from_last_week]"],
+            cited_event_ids=[closed.id, other.id, "evt_from_last_week"],
+        ),
+        actor=agent,
+        source="api",
+    )
+    now = datetime.now(UTC)
+    d = build_digest(
+        [report, closed, other, standup], window_start=now - timedelta(days=1), window_end=now
+    )
+    assert d.shipped == ["cache shipped (grace)"]
+    assert d.in_progress == [
+        "eval doc started (grace)",
+        "reviewing #12 [evt_from_last_week] (grace)",
+    ]
