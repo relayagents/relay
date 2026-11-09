@@ -20,6 +20,7 @@ from relayagents.core.events import (
 from relayagents.core.indexing import index_later
 from relayagents.core.store import EventStore
 from relayagents.tools.context import Services
+from relayagents.workers.standup import reports_closed_as_done
 
 DIGEST_ACTOR = Actor.system("relay.digest")
 
@@ -28,14 +29,7 @@ def build_digest(
     events: list[Event], *, window_start: datetime, window_end: datetime
 ) -> DigestPosted:
     shipped, in_progress, blockers, needed, cited = [], [], [], [], []
-    # `report --close-item` writes a report and a "done" closure by the same person: the closure
-    # says it under Shipped, so the report is not also in progress. Only that person's own done
-    # closure counts, so nobody can hide a teammate's report by closing their item.
-    shipped_by = {
-        (e.payload.item_id, e.actor.user_id)
-        for e in events
-        if isinstance(e.payload, ActionItemClosed) and e.payload.resolution == "done"
-    }
+    closed_reports = reports_closed_as_done(events)  # already under Shipped, as their closure
     shown: set[str] = set()  # events that produced a line of their own
     standups: list[StandupPosted] = []
     for e in events:
@@ -44,7 +38,7 @@ def build_digest(
             shipped.append(f"{p.note or p.item_id} ({e.actor.user_id})")
             shown.add(e.id)
         elif isinstance(p, ReportPosted):
-            if (p.item_id, e.actor.user_id) not in shipped_by:
+            if e.id not in closed_reports:
                 in_progress.append(f"{p.text} ({e.actor.user_id})")
                 shown.add(e.id)
         elif isinstance(p, ActionItemUpdated) and p.status == "blocked":
