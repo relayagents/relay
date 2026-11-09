@@ -669,5 +669,26 @@ def health() -> None:
 register_tool_commands(app, _client)
 
 
+def main() -> None:
+    """Console entry point. An error answer from the node or an unreachable node is an expected
+    outcome, so it prints one line and exits 1; anything else is a bug and keeps its traceback."""
+    import httpx
+
+    from relayagents.cli.client import RelayAPIError
+
+    try:
+        app()
+    except RelayAPIError as exc:
+        typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
+        raise SystemExit(1) from None
+    except httpx.TransportError as exc:
+        try:
+            url = str(exc.request.url)
+        except RuntimeError:  # no request attached
+            url = "the Relay node"
+        typer.secho(f"error: cannot reach {url}: {exc}", fg=typer.colors.RED, err=True)
+        raise SystemExit(1) from None
+
+
 if __name__ == "__main__":
-    app()
+    main()

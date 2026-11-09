@@ -74,11 +74,9 @@ def make_command(spec: ToolSpec, client_factory: Any) -> Any:
         as_json = kwargs.pop("json_output", False)
         args = _coerce(model, kwargs)
         client = client_factory()
-        try:
-            result = client.call_tool(spec.name, args)
-        except Exception as exc:
-            typer.secho(f"error: {exc}", err=True, fg=typer.colors.RED)
-            raise typer.Exit(1) from exc
+        # Error answers and an unreachable node print one line from `relay`'s entry point
+        # (cli/main.py:main); anything else is a bug and keeps its traceback.
+        result = client.call_tool(spec.name, args)
         if as_json or spec.render is None:
             typer.echo(json.dumps(result, indent=2, default=str))
         else:

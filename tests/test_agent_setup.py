@@ -8,10 +8,12 @@ import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from typer.testing import CliRunner
 
 from relayagents.cli import agent_setup as s
+from relayagents.cli import client as main_client
 from relayagents.cli import main
 
 URL = "https://relay.example.dev"
@@ -726,3 +728,36 @@ def test_login_says_unreachable_not_rejected_on_tls_failure(
     assert r.exit_code == 1
     assert "cannot reach https://localhost" in r.output and "SSL_CERT_FILE" in r.output
     assert "token rejected" not in r.output
+
+
+@pytest.mark.parametrize(
+    ("failure", "message"),
+    [
+        (main_client.RelayAPIError(404, "no such approval"), "error: 404: no such approval"),
+        (
+            httpx.ConnectError(
+                "connection refused", request=httpx.Request("POST", "https://relay.test/x")
+            ),
+            "error: cannot reach https://relay.test/x: connection refused",
+        ),
+    ],
+)
+def test_cli_prints_one_line_for_an_expected_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: Exception,
+    message: str,
+) -> None:
+    # First compose boot: a 403 or 404 from the node printed a 40-line traceback.
+    def fail(self: object, *args: object, **kwargs: object) -> None:
+        raise failure
+
+    monkeypatch.setenv("RELAY_URL", "https://relay.test")
+    monkeypatch.setenv("RELAY_TOKEN", "rly_x")
+    monkeypatch.setattr(main_client.RelayClient, "post", fail)
+    monkeypatch.setattr("sys.argv", ["relay", "approvals", "approve", "apr_x"])
+    with pytest.raises(SystemExit) as exit_info:
+        main.main()
+    assert exit_info.value.code == 1
+    err = capsys.readouterr().err
+    assert message in err and "Traceback" not in err
