@@ -11,7 +11,7 @@ from relayagents.core import projections
 from relayagents.core.store import EventStore
 from relayagents.tools.rest import TOOLS_PREFIX
 from relayagents.workers.digest import post_digest
-from tests.conftest import FIXTURES, auth
+from tests.conftest import FIXTURES, auth, create_item
 
 
 async def test_meeting_upload_with_transcript(client: httpx.AsyncClient, team, services) -> None:  # type: ignore[no-untyped-def]
@@ -73,6 +73,7 @@ async def test_standup_draft_cites_events_and_asks_instead_of_asserting(
         },
         headers=auth(team["ada"]["human"]),
     )
+    await create_item(client, team["ada"]["human"], "item_1", "grace", "Migrate the cache")
     await client.post(
         f"{TOOLS_PREFIX}/report",
         json={"text": "cache migration merged", "item_id": "item_1"},
@@ -114,6 +115,7 @@ async def test_digest_quiet_and_busy(services, team, client: httpx.AsyncClient) 
     ev = await post_digest(services)
     assert ev.payload.quiet is True  # type: ignore[attr-defined]
     assert services.chat.posts[-1]["text"].endswith("no update.")
+    await create_item(client, team["ada"]["human"], "item_1", "grace", "Ship the cache")
     await client.post(
         f"{TOOLS_PREFIX}/report",
         json={"text": "shipped the cache", "item_id": "item_1", "close_item": True},

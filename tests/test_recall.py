@@ -17,7 +17,7 @@ from relayagents.core.protocols import MemoryHit
 from relayagents.core.store import EventStore
 from relayagents.tools.rest import TOOLS_PREFIX
 from relayagents.workers.jobs import rebuild_graph, semantic_recall
-from tests.conftest import auth
+from tests.conftest import auth, create_item
 
 
 class FakeMemory:
@@ -293,6 +293,7 @@ async def test_recall_hits_include_cited_and_tool_links(
 ) -> None:  # type: ignore[no-untyped-def]
     from relayagents.workers.digest import post_digest
 
+    await create_item(client, team["ada"]["human"], "item_r", "grace", "Ship the reranker")
     await client.post(
         f"{TOOLS_PREFIX}/report",
         json={"text": "shipped the reranker", "item_id": "item_r", "close_item": True},

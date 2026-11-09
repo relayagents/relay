@@ -97,7 +97,9 @@ class EventsOutput(ToolOutput):
 
 class ReportInput(ToolInput):
     text: str = Field(description="What you did, in one or two sentences.")
-    item_id: str | None = Field(default=None, description="Action item this relates to.")
+    item_id: str | None = Field(
+        default=None, description="An existing action item this relates to (see my_items)."
+    )
     link: str | None = Field(default=None, description="PR, commit, doc, or issue URL.")
     close_item: bool = Field(default=False, description="Also close the action item.")
 

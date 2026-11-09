@@ -24,6 +24,7 @@ from relayagents.core.events import (
 )
 from relayagents.core.ids import new_id
 from relayagents.core.indexing import index_later
+from relayagents.core.models import ActionItemRow
 from relayagents.core.permissions import is_forbidden, policy_for
 from relayagents.core.projections import apply as project
 from relayagents.core.projections import list_decisions, list_items
@@ -153,7 +154,13 @@ async def events(ctx: ToolContext, inp: EventsInput) -> EventsOutput:
 async def report(ctx: ToolContext, inp: ReportInput) -> ReportOutput:
     links = [inp.link] if inp.link else []
     text = redact(inp.text)
+    if inp.close_item and not inp.item_id:
+        raise ToolError("close_item requires item_id")
     async with ctx.db.session() as session:
+        # Check before appending: the log is append-only, so a report or closure pointing at an
+        # item that does not exist could never be taken back.
+        if inp.item_id and await session.get(ActionItemRow, inp.item_id) is None:
+            raise ToolError(f"no such action item: {inp.item_id}")
         store = EventStore(session)
         thread = inp.item_id
         ev = Event.new(
@@ -166,8 +173,7 @@ async def report(ctx: ToolContext, inp: ReportInput) -> ReportOutput:
         await project(session, ev)
         closed = None
         if inp.close_item:
-            if not inp.item_id:
-                raise ToolError("close_item requires item_id")
+            assert inp.item_id is not None  # checked above
             close = Event.new(
                 ActionItemClosed(item_id=inp.item_id, resolution="done", note=text, links=links),
                 actor=ctx.actor,
