@@ -19,6 +19,15 @@ class NotLoggedInError(RuntimeError):
     """No Relay URL or token in the environment or the credentials file."""
 
 
+class RelayAPIError(RuntimeError):
+    """The node answered with an error status: an expected outcome, shown without a traceback."""
+
+    def __init__(self, status_code: int, detail: Any) -> None:
+        super().__init__(f"{status_code}: {detail}")
+        self.status_code = status_code
+        self.detail = detail
+
+
 @dataclass
 class Credentials:
     url: str
@@ -71,7 +80,7 @@ class RelayClient:
                 detail = r.json().get("detail", r.text)
             except Exception:
                 detail = r.text
-            raise RuntimeError(f"{r.status_code}: {detail}")
+            raise RelayAPIError(r.status_code, detail)
 
     def call_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         r = self.http.post(f"/v1/tools/{name}", json=args)
