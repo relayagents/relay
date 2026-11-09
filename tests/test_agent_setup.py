@@ -761,3 +761,24 @@ def test_cli_prints_one_line_for_an_expected_failure(
     assert exit_info.value.code == 1
     err = capsys.readouterr().err
     assert message in err and "Traceback" not in err
+
+
+def test_standup_draft_comes_from_the_node(monkeypatch: pytest.MonkeyPatch) -> None:
+    # First compose boot: the CLI rebuilt the draft itself, with user_id from the saved login, so
+    # with RELAY_URL/RELAY_TOKEN in the environment the draft said user_id "" and submit got a 403.
+    calls: list[tuple[str, dict[str, object]]] = []
+    draft = {"user_id": "grace", "done": ["x [evt_1]"], "doing": [], "blocked": [],
+             "questions": [], "cited_event_ids": ["evt_1"]}  # fmt: skip
+
+    def get(self: object, path: str, **params: object) -> object:
+        calls.append((path, params))
+        return draft
+
+    monkeypatch.setenv("RELAY_URL", "https://relay.test")
+    monkeypatch.setenv("RELAY_TOKEN", "rly_x")
+    monkeypatch.delenv("RELAY_USER", raising=False)
+    monkeypatch.setattr(main_client.RelayClient, "get", get)
+    r = CliRunner().invoke(main.app, ["standup", "draft", "--hours", "12"])
+    assert r.exit_code == 0, r.output
+    assert calls == [("/v1/standups/draft", {"hours": 12})]
+    assert json.loads(r.output) == {**draft, "github_activity": []}

@@ -459,28 +459,9 @@ def standup_draft(
 ) -> None:
     """Print the sourced Done/Doing/Blocked skeleton for me (every line cites an event id)."""
     c = _client()
-    evs = c.call_tool("events", {"since": f"{hours}h", "actor": "me", "limit": 500})["events"]
-    items = c.call_tool("my_items", {"status": "open"})["items"]
-    done, doing, blocked, questions, cited = [], [], [], [], []
-    reported = set()
-    for e in evs:
-        p = e["payload"]
-        if e["type"] == "action_item.closed":
-            done.append(f"{p.get('note') or 'closed ' + p['item_id']} [{e['id']}]")
-        elif e["type"] == "report.posted":
-            doing.append(f"{p['text']} [{e['id']}]")
-            if p.get("item_id"):
-                reported.add(p["item_id"])
-        elif e["type"] == "action_item.updated" and p.get("status") == "blocked":
-            blocked.append(f"{p.get('note') or p['item_id']} [{e['id']}]")
-        else:
-            continue
-        cited.append(e["id"])
-    for it in items:
-        if it["id"] not in reported:
-            questions.append(
-                f"Still working on '{it['title']}' ({it['id']})? No report in the last {hours}h."
-            )
+    # The node builds the draft (workers/standup.py:gather), so the CLI, the workers, and
+    # GET /v1/standups/draft can never disagree; only the optional gh lookup runs here.
+    draft = c.get("/v1/standups/draft", hours=hours)
     gh_activity: list[dict[str, Any]] = []
     if github:
         from relayagents.connectors.github import GhIssueTracker
@@ -492,24 +473,14 @@ def standup_draft(
             try:
                 gh_activity = asyncio.run(
                     GhIssueTracker().user_activity(
-                        c.creds.user_id,
+                        draft["user_id"],
                         login,
                         since_iso=(datetime.now(UTC) - timedelta(hours=hours)).isoformat(),
                     )
                 )
             except Exception as exc:
-                questions.append(f"(gh unavailable: {exc})")
-    _echo_json(
-        {
-            "user_id": c.creds.user_id,
-            "done": done,
-            "doing": doing,
-            "blocked": blocked,
-            "questions": questions,
-            "cited_event_ids": cited,
-            "github_activity": gh_activity,
-        }
-    )
+                draft["questions"].append(f"(gh unavailable: {exc})")
+    _echo_json({**draft, "github_activity": gh_activity})
 
 
 @standup_app.command("submit")

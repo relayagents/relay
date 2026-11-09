@@ -177,3 +177,24 @@ def test_workspace_mcp_is_off_unless_configured(settings) -> None:  # type: igno
         "RELAY_WORKSPACE_MCP_URL: ${GOOGLE_OAUTH_CLIENT_ID:+http://workspace-mcp:8000/mcp}"
         in compose
     )
+
+
+async def test_standup_lists_a_report_that_closed_its_item_only_as_done(
+    client: httpx.AsyncClient, team
+) -> None:  # type: ignore[no-untyped-def]
+    # First compose boot: `report --close-item` put the same line under Done and under Doing.
+    await create_item(client, team["ada"]["human"], "item_c", "grace", "Ship the cache")
+    await client.post(
+        f"{TOOLS_PREFIX}/report",
+        json={"text": "cache shipped", "item_id": "item_c", "close_item": True},
+        headers=auth(team["grace"]["agent"]),
+    )
+    await client.post(
+        f"{TOOLS_PREFIX}/report",
+        json={"text": "started on the eval doc"},
+        headers=auth(team["grace"]["agent"]),
+    )
+    draft = (await client.get("/v1/standups/draft", headers=auth(team["grace"]["agent"]))).json()
+    assert [d.split(" [")[0] for d in draft["done"]] == ["cache shipped"]
+    assert [d.split(" [")[0] for d in draft["doing"]] == ["started on the eval doc"]
+    assert draft["user_id"] == "grace"

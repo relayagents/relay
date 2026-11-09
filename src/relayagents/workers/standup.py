@@ -59,11 +59,16 @@ async def gather(
         since=now - timedelta(hours=hours), user_id=user_id, limit=1000
     )
     draft = StandupDraft(user_id=user_id)
+    # `report --close-item` writes the report and the closure; the closure already says it under
+    # Done, so a report on an item closed in this window is not also "doing".
+    closed = {e.payload.item_id for e in events if isinstance(e.payload, ActionItemClosed)}
     for e in events:
         p = e.payload
         if isinstance(p, ActionItemClosed):
             draft.done.append(f"{p.note or 'closed ' + p.item_id} [{e.id}]")
         elif isinstance(p, ReportPosted):
+            if p.item_id in closed:
+                continue
             draft.doing.append(f"{p.text} [{e.id}]")
         elif isinstance(p, ActionItemUpdated) and p.status == "blocked":
             draft.blocked.append(f"{p.note or p.item_id} [{e.id}]")
