@@ -60,9 +60,21 @@ def login(
     """Obtain a per-user token. Default: device flow approved from your Slack DM."""
     url = (url or os.environ.get("RELAY_URL") or typer.prompt("Relay URL")).rstrip("/")
     if token:
+        import httpx
+
         creds = Credentials(url=url, token=token, user_id=user)
         try:
             me = RelayClient(creds).whoami()
+        except httpx.TransportError as exc:
+            # Never reached the server, so the token was not checked: say so, not "rejected".
+            hint = (
+                "\nThe server's TLS certificate is not trusted here. For a local node behind"
+                " Caddy, see 'Run it on your machine' in README.md (SSL_CERT_FILE)."
+                if "CERTIFICATE_VERIFY_FAILED" in str(exc)
+                else ""
+            )
+            typer.secho(f"cannot reach {url}: {exc}{hint}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(1) from exc
         except Exception as exc:
             typer.secho(f"token rejected: {exc}", fg=typer.colors.RED, err=True)
             raise typer.Exit(1) from exc
