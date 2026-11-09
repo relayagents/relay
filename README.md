@@ -21,6 +21,22 @@ relay my-items                    # ...and `relay recall "embedding cache"`, `re
 
 No Docker on hand? `RELAY_DATABASE_URL=sqlite+aiosqlite:///relay.db RELAY_ENVIRONMENT=test uv run relay serve` runs the API alone for a look around, and `uv run pytest -q` runs the whole suite on SQLite.
 
+### Run it on your machine
+
+The same steps work on a laptop with Docker. The first build needs about 25 GB free: the images take about 10 GB (the transcription image is most of it) and Docker's build cache the rest.
+
+- In `.env`, set `RELAY_HOSTNAME=localhost` and `RELAY_PUBLIC_URL=https://localhost`. Slack, Google, and the model keys can stay blank: extraction uses the `keyword` model, embeddings turn off, and recordings are transcribed without speaker labels unless `HF_TOKEN` is set.
+- Caddy serves `localhost` from its own certificate authority, which your machine does not trust yet. Copy its root certificate out and point the CLI at it before `relay login`:
+
+  ```bash
+  mkdir -p ~/.config/relay
+  docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ~/.config/relay/localhost-ca.crt
+  export SSL_CERT_FILE=~/.config/relay/localhost-ca.crt   # replaces the trust store in this shell only
+  ```
+
+  Node-based agents such as Claude Code read `NODE_EXTRA_CA_CERTS` instead.
+- `docker compose down` stops the node; `docker compose down -v` also deletes its data.
+
 ## How it fits together
 
 ```mermaid

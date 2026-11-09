@@ -709,3 +709,20 @@ def test_setup_agent_keeps_the_new_token_when_listing_fails(tmp_path, monkeypatc
     assert result.exit_code == 0, result.output
     assert fake.revoked == []  # the working token stays
     assert "may still be live. Rerun setup-agent" in result.output
+
+
+def test_login_says_unreachable_not_rejected_on_tls_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # First compose boot: Caddy's local CA was untrusted and login printed "token rejected",
+    # though the token never reached the server.
+    import httpx
+
+    def untrusted(self: object) -> None:
+        raise httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed")
+
+    monkeypatch.setattr(main.RelayClient, "whoami", untrusted)
+    r = CliRunner().invoke(main.app, ["login", "--url", "https://localhost", "--token", "rly_x"])
+    assert r.exit_code == 1
+    assert "cannot reach https://localhost" in r.output and "SSL_CERT_FILE" in r.output
+    assert "token rejected" not in r.output
