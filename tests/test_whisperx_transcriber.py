@@ -39,7 +39,16 @@ def fake_whisperx(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
     wx.assign_word_speakers = assign_word_speakers  # type: ignore[attr-defined]
     diarize_mod = types.ModuleType("whisperx.diarize")
-    diarize_mod.DiarizationPipeline = lambda **k: lambda audio: "turns"  # type: ignore[attr-defined]
+
+    class DiarizationPipeline:  # whisperx 3.8's signature (the locked version): token, not
+        # use_auth_token, so a wrong keyword fails here as it does in the image.
+        def __init__(self, model_name=None, token=None, device="cpu", cache_dir=None):  # type: ignore[no-untyped-def]
+            calls.append(f"token={token}")
+
+        def __call__(self, audio: Any) -> str:
+            return "turns"
+
+    diarize_mod.DiarizationPipeline = DiarizationPipeline  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "whisperx", wx)
     monkeypatch.setitem(sys.modules, "whisperx.diarize", diarize_mod)
     return calls
@@ -59,4 +68,4 @@ async def test_hf_token_still_diarizes(fake_whisperx: list[str], tmp_path: Path)
     t = WhisperXTranscriber(model="small", device="cpu", compute_type="int8", hf_token="hf_x")
     out = await t.transcribe(tmp_path / "a.wav", meeting_id="mtg_1")
     assert out.segments[0].speaker == "SPEAKER_00"
-    assert fake_whisperx == ["diarize"]
+    assert fake_whisperx == ["token=hf_x", "diarize"]

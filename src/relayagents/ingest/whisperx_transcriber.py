@@ -74,7 +74,7 @@ class WhisperXTranscriber:
         if diarize:
             from whisperx.diarize import DiarizationPipeline
 
-            diarizer = DiarizationPipeline(use_auth_token=self.hf_token, device=device)
+            diarizer = DiarizationPipeline(token=self.hf_token, device=device)
             result = whisperx.assign_word_speakers(diarizer(audio), result)
         segments = [
             Segment(
