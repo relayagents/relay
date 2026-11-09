@@ -653,8 +653,10 @@ def main() -> None:
         typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
         raise SystemExit(1) from None
     except httpx.TransportError as exc:
+        # Scheme and host only: a path can carry a device code that is exchanged for a token.
         try:
-            url = str(exc.request.url)
+            u = exc.request.url
+            url = f"{u.scheme}://{u.host}" + (f":{u.port}" if u.port else "")
         except RuntimeError:  # no request attached
             url = "the Relay node"
         typer.secho(f"error: cannot reach {url}: {exc}", fg=typer.colors.RED, err=True)

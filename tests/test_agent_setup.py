@@ -736,9 +736,10 @@ def test_login_says_unreachable_not_rejected_on_tls_failure(
         (main_client.RelayAPIError(404, "no such approval"), "error: 404: no such approval"),
         (
             httpx.ConnectError(
-                "connection refused", request=httpx.Request("POST", "https://relay.test/x")
+                "connection refused",
+                request=httpx.Request("GET", "https://relay.test/v1/auth/device/secret-code?t=1"),
             ),
-            "error: cannot reach https://relay.test/x: connection refused",
+            "error: cannot reach https://relay.test: connection refused",
         ),
     ],
 )
@@ -761,6 +762,8 @@ def test_cli_prints_one_line_for_an_expected_failure(
     assert exit_info.value.code == 1
     err = capsys.readouterr().err
     assert message in err and "Traceback" not in err
+    # Only scheme and host: a path can hold a device code that is exchanged for a token.
+    assert "secret-code" not in err
 
 
 def test_standup_draft_comes_from_the_node(monkeypatch: pytest.MonkeyPatch) -> None:
