@@ -97,6 +97,7 @@ def create_app(settings: Settings | None = None, *, services: Services | None = 
                 await slack.start()
             except Exception as exc:
                 log.warning("slack.start_failed", error=str(exc))
+                await slack.stop()  # the socket client already holds an HTTP session
                 slack = None
         async with mcp.session_manager.run():
             yield
