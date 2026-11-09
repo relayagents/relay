@@ -37,6 +37,17 @@ The same steps work on a laptop with Docker. The first build needs about 25 GB f
   Node-based agents such as Claude Code read `NODE_EXTRA_CA_CERTS` instead.
 - `docker compose down` stops the node; `docker compose down -v` also deletes its data.
 
+### Connect Slack
+
+One Slack app per workspace, over Socket Mode, so the node needs no public URL (ADR-0007). It works on Slack's free plan.
+
+1. At [api.slack.com/apps](https://api.slack.com/apps), choose **Create New App → From a manifest**, pick the workspace, and paste [`deploy/slack/manifest.json`](deploy/slack/manifest.json).
+2. **Basic Information → App-Level Tokens → Generate Token and Scopes**, scope `connections:write`. That `xapp-...` value is `SLACK_APP_TOKEN`.
+3. **Install App** (or **OAuth & Permissions**) → **Install to Workspace**. The **Bot User OAuth Token** (`xoxb-...`) is `SLACK_BOT_TOKEN`.
+4. In Slack, invite the bot to the team channel (`/invite @Relay`), then open the channel's details: the **Channel ID** (`C...`) at the bottom is `SLACK_TEAM_CHANNEL`.
+5. Put the three in `.env` and run `docker compose up -d`. `relay-api` logs `slack.socket_mode.connected`.
+6. Each person links their Slack account, so approvals and DMs reach them: in Slack, **Profile → ⋮ → Copy member ID**, then `relay me --slack-user-id U...` (or `--slack-user-id` on `scripts/add-user.sh`).
+
 ## How it fits together
 
 ```mermaid
