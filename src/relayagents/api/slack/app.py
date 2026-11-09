@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from typing import Any
 
 import structlog
 from slack_bolt.adapter.socket_mode.aiohttp import AsyncSocketModeHandler
 from slack_bolt.async_app import AsyncApp
+from slack_sdk.errors import SlackApiError
+from slack_sdk.web.async_client import AsyncWebClient
 from sqlalchemy import select
 
 from relayagents.core import approvals
@@ -152,11 +155,39 @@ class SlackRunner:
         self.services = services
         self.app = build_slack_app(services)
         self.handler = AsyncSocketModeHandler(self.app, services.settings.slack_app_token)
+        self._connecting: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
-        await self.handler.connect_async()
+        """Check both tokens once, then connect in the background.
+
+        slack_sdk's ``connect_async()`` retries every failure forever, ``invalid_auth`` included,
+        so awaiting it here let a bad token or a Slack outage hang API startup and ``/health``.
+        A token Slack rejects raises from here; the lifespan logs it and runs without Slack.
+        Slack being unreachable is not a verdict on the tokens, so that keeps retrying in the
+        background like any later disconnect.
+        """
+        settings = self.services.settings
+        try:
+            await AsyncWebClient(token=settings.slack_bot_token).auth_test()
+            await AsyncWebClient().apps_connections_open(app_token=settings.slack_app_token)
+        except SlackApiError:
+            raise
+        except Exception as exc:
+            log.warning("slack.unreachable_at_start", error=str(exc))
+        self._connecting = asyncio.create_task(self._connect(), name="slack-socket-mode")
+
+    async def _connect(self) -> None:
+        try:
+            await self.handler.connect_async()
+        except Exception as exc:
+            log.warning("slack.socket_mode.connect_failed", error=str(exc))
+            return
         log.info("slack.socket_mode.connected")
 
     async def stop(self) -> None:
+        if self._connecting is not None:
+            self._connecting.cancel()
+            with contextlib.suppress(BaseException):
+                await self._connecting
         with contextlib.suppress(Exception):
             await self.handler.close_async()
