@@ -50,6 +50,23 @@ class StandupDraft(BaseModel):
     cited_event_ids: list[str] = Field(default_factory=list)
 
 
+def reports_closed_as_done(events: list[Event]) -> set[str]:
+    """Reports that `report --close-item` turned into a done closure.
+
+    That tool call writes the report and then the closure, citing the report as its parent, so
+    the closure already says the same thing under Done/Shipped. Matching on that link, by the same
+    author, leaves earlier progress reports on the item, and anyone else's, where they are.
+    """
+    authors = {e.id: e.actor.user_id for e in events if isinstance(e.payload, ReportPosted)}
+    return {
+        parent
+        for e in events
+        if isinstance(e.payload, ActionItemClosed) and e.payload.resolution == "done"
+        for parent in e.provenance.parent_event_ids
+        if parent in authors and authors[parent] == e.actor.user_id
+    }
+
+
 async def gather(
     session: AsyncSession, user_id: str, *, hours: int = 24, now: datetime | None = None
 ) -> StandupDraft:
@@ -59,19 +76,13 @@ async def gather(
         since=now - timedelta(hours=hours), user_id=user_id, limit=1000
     )
     draft = StandupDraft(user_id=user_id)
-    # `report --close-item` writes the report and a "done" closure; the closure already says it
-    # under Done, so the report is not also "doing". Another resolution leaves the report in Doing.
-    closed = {
-        e.payload.item_id
-        for e in events
-        if isinstance(e.payload, ActionItemClosed) and e.payload.resolution == "done"
-    }
+    closed_reports = reports_closed_as_done(events)
     for e in events:
         p = e.payload
         if isinstance(p, ActionItemClosed):
             draft.done.append(f"{p.note or 'closed ' + p.item_id} [{e.id}]")
         elif isinstance(p, ReportPosted):
-            if p.item_id in closed:
+            if e.id in closed_reports:
                 continue
             draft.doing.append(f"{p.text} [{e.id}]")
         elif isinstance(p, ActionItemUpdated) and p.status == "blocked":

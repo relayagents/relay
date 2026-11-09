@@ -186,6 +186,11 @@ async def test_standup_lists_a_report_that_closed_its_item_only_as_done(
     await create_item(client, team["ada"]["human"], "item_c", "grace", "Ship the cache")
     await client.post(
         f"{TOOLS_PREFIX}/report",
+        json={"text": "cache half done", "item_id": "item_c"},
+        headers=auth(team["grace"]["agent"]),
+    )
+    await client.post(
+        f"{TOOLS_PREFIX}/report",
         json={"text": "cache shipped", "item_id": "item_c", "close_item": True},
         headers=auth(team["grace"]["agent"]),
     )
@@ -196,7 +201,11 @@ async def test_standup_lists_a_report_that_closed_its_item_only_as_done(
     )
     draft = (await client.get("/v1/standups/draft", headers=auth(team["grace"]["agent"]))).json()
     assert [d.split(" [")[0] for d in draft["done"]] == ["cache shipped"]
-    assert [d.split(" [")[0] for d in draft["doing"]] == ["started on the eval doc"]
+    # Only the report the closure came from is folded into Done; earlier progress stays.
+    assert [d.split(" [")[0] for d in draft["doing"]] == [
+        "cache half done",
+        "started on the eval doc",
+    ]
     assert draft["user_id"] == "grace"
 
 
@@ -209,6 +218,7 @@ def test_digest_says_each_thing_once() -> None:
         ActionItemClosed,
         Actor,
         Event,
+        Provenance,
         ReportPosted,
         StandupPosted,
     )
@@ -219,7 +229,10 @@ def test_digest_says_each_thing_once() -> None:
         ReportPosted(text="cache shipped", item_id="item_c"), actor=agent, source="api"
     )
     closed = Event.new(
-        ActionItemClosed(item_id="item_c", note="cache shipped"), actor=agent, source="api"
+        ActionItemClosed(item_id="item_c", note="cache shipped"),
+        actor=agent,
+        source="api",
+        provenance=Provenance(parent_event_ids=[report.id]),
     )
     other = Event.new(ReportPosted(text="eval doc started"), actor=agent, source="api")
     standup = Event.new(
@@ -254,6 +267,7 @@ def test_digest_dedupe_never_hides_what_it_did_not_show() -> None:
         Actor,
         DecisionMade,
         Event,
+        Provenance,
         ReportPosted,
         StandupPosted,
     )
@@ -264,7 +278,10 @@ def test_digest_dedupe_never_hides_what_it_did_not_show() -> None:
         ReportPosted(text="half the cache", item_id="item_c"), actor=grace, source="api"
     )
     closed_by_ada = Event.new(
-        ActionItemClosed(item_id="item_c", note="ada closed it"), actor=ada, source="api"
+        ActionItemClosed(item_id="item_c", note="ada closed it"),
+        actor=ada,
+        source="api",
+        provenance=Provenance(parent_event_ids=[report.id]),
     )
     decision = Event.new(
         DecisionMade(decision_id="dec_1", statement="use pgvector"), actor=ada, source="api"
