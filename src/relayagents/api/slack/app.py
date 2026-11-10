@@ -149,6 +149,20 @@ async def _login_from_slack(
         )
 
 
+# Slack error codes that mean the token itself will never work: retrying cannot fix them.
+TOKEN_REJECTED = frozenset(
+    {
+        "invalid_auth",
+        "not_authed",
+        "account_inactive",
+        "token_revoked",
+        "token_expired",
+        "not_allowed_token_type",
+        "missing_scope",
+    }
+)
+
+
 class SlackRunner:
     """Runs the Socket Mode connection inside the API process lifespan."""
 
@@ -164,15 +178,17 @@ class SlackRunner:
         slack_sdk's ``connect_async()`` retries every failure forever, ``invalid_auth`` included,
         so awaiting it here let a bad token or a Slack outage hang API startup and ``/health``.
         A token Slack rejects raises from here; the lifespan logs it and runs without Slack.
-        Slack being unreachable is not a verdict on the tokens, so that keeps retrying in the
-        background like any later disconnect.
+        Anything else (Slack unreachable, rate limited, or having a bad moment) is not a verdict
+        on the tokens, so that keeps retrying in the background like any later disconnect.
         """
         settings = self.services.settings
         try:
             await AsyncWebClient(token=settings.slack_bot_token).auth_test()
             await AsyncWebClient().apps_connections_open(app_token=settings.slack_app_token)
-        except SlackApiError:
-            raise
+        except SlackApiError as exc:
+            if exc.response.get("error") in TOKEN_REJECTED:
+                raise
+            log.warning("slack.unavailable_at_start", error=str(exc))
         except Exception as exc:
             log.warning("slack.unreachable_at_start", error=str(exc))
         self._connecting = asyncio.create_task(self._connect(), name="slack-socket-mode")
