@@ -82,6 +82,7 @@ async def resolve_approval(
 
             posted = await post_approved_draft(services, session, row)
         await session.commit()
+        await approvals.update_chat(services.chat, row)  # retire the Slack buttons
         out = _out(row)
         if posted is not None:
             out["posted_event_id"] = posted.id
