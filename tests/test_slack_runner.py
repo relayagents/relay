@@ -100,3 +100,27 @@ async def test_slow_connect_does_not_block_startup(
     await asyncio.wait_for(runner.start(), timeout=5)
     await asyncio.wait_for(connecting.wait(), timeout=5)
     await asyncio.wait_for(runner.stop(), timeout=5)
+
+
+@pytest.mark.parametrize(
+    "error", ["ratelimited", "internal_error", "fatal_error", "service_unavailable"]
+)
+async def test_a_transient_slack_error_retries_instead_of_disabling_slack(
+    slack_services: Services, monkeypatch: pytest.MonkeyPatch, error: str
+) -> None:
+    # Slack answers these for a perfectly good token; they say nothing about the token, so
+    # giving up on Slack for the life of the process would be wrong.
+    def transient(*args: Any, **kwargs: Any) -> Any:
+        raise SlackApiError(error, _response({"ok": False, "error": error}))
+
+    monkeypatch.setattr(AsyncWebClient, "auth_test", transient)
+    connecting = asyncio.Event()
+
+    async def connect() -> None:
+        connecting.set()
+
+    runner = SlackRunner(slack_services)
+    monkeypatch.setattr(runner.handler, "connect_async", connect)
+    await asyncio.wait_for(runner.start(), timeout=5)
+    await asyncio.wait_for(connecting.wait(), timeout=5)
+    await runner.stop()
