@@ -277,7 +277,9 @@ async def request_approval(ctx: ToolContext, inp: RequestApprovalInput) -> Reque
         approval_id = row.id
         notified = row.chat_ts is not None
     if inp.wait:
-        row = await approvals.wait(ctx.db.sessions, approval_id, timeout_s=inp.timeout_s)
+        row = await approvals.wait(
+            ctx.db.sessions, approval_id, timeout_s=inp.timeout_s, chat=ctx.services.chat
+        )
     return RequestApprovalOutput(
         approval_id=approval_id,
         status=row.status,

@@ -210,10 +210,10 @@ async def test_cli_approval_of_a_standup_draft_posts_it(
         headers=auth(human),
     )
     assert r.status_code == 200 and r.json()["posted_event_id"].startswith("evt_")
-    assert (
-        services.chat.posts[-1]["channel"] == "C_TEAM"
-        and "cache landed" in services.chat.posts[-1]["text"]
-    )
+    standup, retired = services.chat.posts[-2:]
+    assert standup["channel"] == "C_TEAM" and "cache landed" in standup["text"]
+    # The draft DM is replaced, so it cannot be posted a second time from Slack.
+    assert retired["update"] and retired["text"].startswith(":white_check_mark: Approved")
     evs = (
         await client.get("/v1/events", params={"type": ["standup.posted"]}, headers=auth(human))
     ).json()

@@ -8,6 +8,7 @@ then :func:`wait`.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -16,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from relayagents.core.events import Actor, ApprovalRequested, ApprovalResolved, Event, Provenance
 from relayagents.core.ids import new_id
 from relayagents.core.models import ApprovalRow
-from relayagents.core.protocols import ChatApp
+from relayagents.core.protocols import ChatApp, ChatMessageRef
 from relayagents.core.redact import redact
 from relayagents.core.store import EventStore
 
@@ -69,6 +70,39 @@ def approval_blocks(
             ],
         },
     ]
+
+
+def settled_message(row: ApprovalRow, *, by: str | None = None) -> tuple[str, list[dict[str, Any]]]:
+    """Text and blocks that replace an approval's buttons once it is settled. ``by`` is how to
+    name the resolver (a Slack mention); it defaults to their Relay id."""
+    verdict = {
+        "approved": ":white_check_mark: Approved",
+        "denied": ":no_entry: Denied",
+        "expired": ":hourglass: Expired",
+    }.get(row.status, row.status)
+    who = by or (f"`{row.resolved_by}`" if row.resolved_by else None)
+    head = f"{verdict} by {who}" if row.resolved_by and who else verdict
+    if row.status == "expired":
+        head += ", nobody answered in time. Nothing was done"
+    action = row.edited_action or row.action
+    blocks = [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"{head}\n> {action}\n`{row.id}`"},
+        }
+    ]
+    return f"{head}: {action}", blocks
+
+
+async def update_chat(chat: ChatApp | None, row: ApprovalRow, *, by: str | None = None) -> None:
+    """Replace the approval's DM so its buttons cannot be clicked after it is settled."""
+    if chat is None or not (row.chat_channel and row.chat_ts):
+        return
+    text, blocks = settled_message(row, by=by)
+    with contextlib.suppress(Exception):
+        await chat.update(
+            ChatMessageRef(channel=row.chat_channel, ts=row.chat_ts), text, blocks=blocks
+        )
 
 
 async def request(
@@ -156,6 +190,10 @@ async def resolve(
         raise PermissionError(
             f"{resolved_by} cannot resolve an approval requested of {row.requested_of}"
         )
+    if decision != "expired" and row.expires_at and datetime.now(UTC) >= row.expires_at:
+        # Past its deadline the requester has stopped waiting (or was told "expired"), so a late
+        # answer must not count. Settle it as expired; the caller reads row.status.
+        decision, resolved_by, edited_action, note = "expired", None, None, None
     edited_action = redact(edited_action) if edited_action else edited_action
     note = redact(note) if note else note
     now = datetime.now(UTC)
@@ -182,7 +220,12 @@ async def resolve(
 
 
 async def wait(
-    session_factory: Any, approval_id: str, *, timeout_s: float, poll_s: float = 1.0
+    session_factory: Any,
+    approval_id: str,
+    *,
+    timeout_s: float,
+    poll_s: float = 1.0,
+    chat: ChatApp | None = None,
 ) -> ApprovalRow:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
@@ -198,6 +241,7 @@ async def wait(
                     session, approval_id=approval_id, decision="expired", resolved_by=None
                 )
                 await session.commit()
+                await update_chat(chat, row)
                 return row
         if loop.time() >= deadline:
             return row

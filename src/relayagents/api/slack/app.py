@@ -94,25 +94,26 @@ async def _resolve_from_slack(
                 text="Only the person this approval was requested of can resolve it.",
             )
             return
+        was = row.status
         row = await approvals.resolve(
             session, approval_id=approval_id, decision=decision, resolved_by=user_id
         )
         await session.commit()
-    verdict = ":white_check_mark: Approved" if decision == "approved" else ":no_entry: Denied"
+    if was != "pending" or row.status != decision:
+        # The click changed nothing: say so, and show what was actually recorded below.
+        with contextlib.suppress(Exception):
+            await client.chat_postEphemeral(
+                channel=body["channel"]["id"],
+                user=slack_user,
+                text=f"Nothing was done: this approval is already {row.status}.",
+            )
+    # Render the recorded outcome, never the button that was pressed.
+    text, blocks = approvals.settled_message(
+        row, by=f"<@{slack_user}>" if row.resolved_by == user_id else None
+    )
     with contextlib.suppress(Exception):
         await client.chat_update(
-            channel=body["channel"]["id"],
-            ts=body["message"]["ts"],
-            text=f"{verdict} by <@{slack_user}>: {row.action}",
-            blocks=[
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"{verdict} by <@{slack_user}>\n> {row.action}\n`{approval_id}`",
-                    },
-                }
-            ],
+            channel=body["channel"]["id"], ts=body["message"]["ts"], text=text, blocks=blocks
         )
 
 
