@@ -42,7 +42,7 @@ graph = ["graphiti-core[kuzu]>=0.30"]
 ingest = ["whisperx>=3.4"]
 
 [project.scripts]
-relay = "relayagents.cli.main:app"
+relay = "relayagents.cli.main:main"
 
 [project.urls]
 Homepage = "https://relayagents.dev"

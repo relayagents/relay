@@ -76,3 +76,24 @@ async def client(app) -> AsyncIterator[httpx.AsyncClient]:  # type: ignore[no-un
 
 def auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+async def create_item(
+    client: httpx.AsyncClient, human_token: str, item_id: str, assignee: str, title: str = "a task"
+) -> None:
+    """Publish action_item.created, so a report can cite and close the item (reports on unknown
+    items are rejected)."""
+    r = await client.post(
+        "/v1/events",
+        json={
+            "payload": {
+                "type": "action_item.created",
+                "item_id": item_id,
+                "title": title,
+                "assignee": assignee,
+            },
+            "source": "api",
+        },
+        headers=auth(human_token),
+    )
+    assert r.status_code < 300, r.text

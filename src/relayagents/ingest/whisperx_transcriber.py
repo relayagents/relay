@@ -10,7 +10,11 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+import structlog
+
 from relayagents.core.protocols import Segment, Transcript
+
+log = structlog.get_logger()
 
 
 class WhisperXTranscriber:
@@ -33,13 +37,11 @@ class WhisperXTranscriber:
         self._model: Any = None
 
     def _resolve(self) -> tuple[str, str]:
-        import torch
+        device = self.device
+        if device == "auto":
+            import torch
 
-        device = (
-            self.device
-            if self.device != "auto"
-            else ("cuda" if torch.cuda.is_available() else "cpu")
-        )
+            device = "cuda" if torch.cuda.is_available() else "cpu"
         compute = (
             self.compute_type
             if self.compute_type != "auto"
@@ -64,12 +66,15 @@ class WhisperXTranscriber:
         result = whisperx.align(
             result["segments"], align_model, metadata, audio, device, return_char_alignments=False
         )
+        if diarize and not self.hf_token:
+            # pyannote's models are gated. A transcript without speaker labels still carries the
+            # cue phrases extraction needs, so keep it rather than fail the whole meeting.
+            log.warning("ingest.diarization_skipped", meeting_id=meeting_id, reason="no HF token")
+            diarize = False
         if diarize:
-            if not self.hf_token:
-                raise RuntimeError("diarization needs RELAY_HF_TOKEN (pyannote models are gated)")
             from whisperx.diarize import DiarizationPipeline
 
-            diarizer = DiarizationPipeline(use_auth_token=self.hf_token, device=device)
+            diarizer = DiarizationPipeline(token=self.hf_token, device=device)
             result = whisperx.assign_word_speakers(diarizer(audio), result)
         segments = [
             Segment(

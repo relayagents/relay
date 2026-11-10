@@ -8,10 +8,12 @@ import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from typer.testing import CliRunner
 
 from relayagents.cli import agent_setup as s
+from relayagents.cli import client as main_client
 from relayagents.cli import main
 
 URL = "https://relay.example.dev"
@@ -709,3 +711,77 @@ def test_setup_agent_keeps_the_new_token_when_listing_fails(tmp_path, monkeypatc
     assert result.exit_code == 0, result.output
     assert fake.revoked == []  # the working token stays
     assert "may still be live. Rerun setup-agent" in result.output
+
+
+def test_login_says_unreachable_not_rejected_on_tls_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # First compose boot: Caddy's local CA was untrusted and login printed "token rejected",
+    # though the token never reached the server.
+    import httpx
+
+    def untrusted(self: object) -> None:
+        raise httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed")
+
+    monkeypatch.setattr(main.RelayClient, "whoami", untrusted)
+    r = CliRunner().invoke(main.app, ["login", "--url", "https://localhost", "--token", "rly_x"])
+    assert r.exit_code == 1
+    assert "cannot reach https://localhost" in r.output and "SSL_CERT_FILE" in r.output
+    assert "token rejected" not in r.output
+
+
+@pytest.mark.parametrize(
+    ("failure", "message"),
+    [
+        (main_client.RelayAPIError(404, "no such approval"), "error: 404: no such approval"),
+        (
+            httpx.ConnectError(
+                "connection refused",
+                request=httpx.Request("GET", "https://relay.test/v1/auth/device/secret-code?t=1"),
+            ),
+            "error: cannot reach https://relay.test: connection refused",
+        ),
+    ],
+)
+def test_cli_prints_one_line_for_an_expected_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: Exception,
+    message: str,
+) -> None:
+    # First compose boot: a 403 or 404 from the node printed a 40-line traceback.
+    def fail(self: object, *args: object, **kwargs: object) -> None:
+        raise failure
+
+    monkeypatch.setenv("RELAY_URL", "https://relay.test")
+    monkeypatch.setenv("RELAY_TOKEN", "rly_x")
+    monkeypatch.setattr(main_client.RelayClient, "post", fail)
+    monkeypatch.setattr("sys.argv", ["relay", "approvals", "approve", "apr_x"])
+    with pytest.raises(SystemExit) as exit_info:
+        main.main()
+    assert exit_info.value.code == 1
+    err = capsys.readouterr().err
+    assert message in err and "Traceback" not in err
+    # Only scheme and host: a path can hold a device code that is exchanged for a token.
+    assert "secret-code" not in err
+
+
+def test_standup_draft_comes_from_the_node(monkeypatch: pytest.MonkeyPatch) -> None:
+    # First compose boot: the CLI rebuilt the draft itself, with user_id from the saved login, so
+    # with RELAY_URL/RELAY_TOKEN in the environment the draft said user_id "" and submit got a 403.
+    calls: list[tuple[str, dict[str, object]]] = []
+    draft = {"user_id": "grace", "done": ["x [evt_1]"], "doing": [], "blocked": [],
+             "questions": [], "cited_event_ids": ["evt_1"]}  # fmt: skip
+
+    def get(self: object, path: str, **params: object) -> object:
+        calls.append((path, params))
+        return draft
+
+    monkeypatch.setenv("RELAY_URL", "https://relay.test")
+    monkeypatch.setenv("RELAY_TOKEN", "rly_x")
+    monkeypatch.delenv("RELAY_USER", raising=False)
+    monkeypatch.setattr(main_client.RelayClient, "get", get)
+    r = CliRunner().invoke(main.app, ["standup", "draft", "--hours", "12"])
+    assert r.exit_code == 0, r.output
+    assert calls == [("/v1/standups/draft", {"hours": 12})]
+    assert json.loads(r.output) == {**draft, "github_activity": []}

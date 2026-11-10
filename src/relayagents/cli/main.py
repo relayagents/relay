@@ -60,9 +60,21 @@ def login(
     """Obtain a per-user token. Default: device flow approved from your Slack DM."""
     url = (url or os.environ.get("RELAY_URL") or typer.prompt("Relay URL")).rstrip("/")
     if token:
+        import httpx
+
         creds = Credentials(url=url, token=token, user_id=user)
         try:
             me = RelayClient(creds).whoami()
+        except httpx.TransportError as exc:
+            # Never reached the server, so the token was not checked: say so, not "rejected".
+            hint = (
+                "\nThe server's TLS certificate is not trusted here. For a local node behind"
+                " Caddy, see 'Run it on your machine' in README.md (SSL_CERT_FILE)."
+                if "CERTIFICATE_VERIFY_FAILED" in str(exc)
+                else ""
+            )
+            typer.secho(f"cannot reach {url}: {exc}{hint}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(1) from exc
         except Exception as exc:
             typer.secho(f"token rejected: {exc}", fg=typer.colors.RED, err=True)
             raise typer.Exit(1) from exc
@@ -447,28 +459,9 @@ def standup_draft(
 ) -> None:
     """Print the sourced Done/Doing/Blocked skeleton for me (every line cites an event id)."""
     c = _client()
-    evs = c.call_tool("events", {"since": f"{hours}h", "actor": "me", "limit": 500})["events"]
-    items = c.call_tool("my_items", {"status": "open"})["items"]
-    done, doing, blocked, questions, cited = [], [], [], [], []
-    reported = set()
-    for e in evs:
-        p = e["payload"]
-        if e["type"] == "action_item.closed":
-            done.append(f"{p.get('note') or 'closed ' + p['item_id']} [{e['id']}]")
-        elif e["type"] == "report.posted":
-            doing.append(f"{p['text']} [{e['id']}]")
-            if p.get("item_id"):
-                reported.add(p["item_id"])
-        elif e["type"] == "action_item.updated" and p.get("status") == "blocked":
-            blocked.append(f"{p.get('note') or p['item_id']} [{e['id']}]")
-        else:
-            continue
-        cited.append(e["id"])
-    for it in items:
-        if it["id"] not in reported:
-            questions.append(
-                f"Still working on '{it['title']}' ({it['id']})? No report in the last {hours}h."
-            )
+    # The node builds the draft (workers/standup.py:gather), so the CLI, the workers, and
+    # GET /v1/standups/draft can never disagree; only the optional gh lookup runs here.
+    draft = c.get("/v1/standups/draft", hours=hours)
     gh_activity: list[dict[str, Any]] = []
     if github:
         from relayagents.connectors.github import GhIssueTracker
@@ -480,24 +473,14 @@ def standup_draft(
             try:
                 gh_activity = asyncio.run(
                     GhIssueTracker().user_activity(
-                        c.creds.user_id,
+                        draft["user_id"],
                         login,
                         since_iso=(datetime.now(UTC) - timedelta(hours=hours)).isoformat(),
                     )
                 )
             except Exception as exc:
-                questions.append(f"(gh unavailable: {exc})")
-    _echo_json(
-        {
-            "user_id": c.creds.user_id,
-            "done": done,
-            "doing": doing,
-            "blocked": blocked,
-            "questions": questions,
-            "cited_event_ids": cited,
-            "github_activity": gh_activity,
-        }
-    )
+                draft["questions"].append(f"(gh unavailable: {exc})")
+    _echo_json({**draft, "github_activity": gh_activity})
 
 
 @standup_app.command("submit")
@@ -657,5 +640,28 @@ def health() -> None:
 register_tool_commands(app, _client)
 
 
+def main() -> None:
+    """Console entry point. An error answer from the node or an unreachable node is an expected
+    outcome, so it prints one line and exits 1; anything else is a bug and keeps its traceback."""
+    import httpx
+
+    from relayagents.cli.client import RelayAPIError
+
+    try:
+        app()
+    except RelayAPIError as exc:
+        typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
+        raise SystemExit(1) from None
+    except httpx.TransportError as exc:
+        # Scheme and host only: a path can carry a device code that is exchanged for a token.
+        try:
+            u = exc.request.url
+            url = f"{u.scheme}://{u.host}" + (f":{u.port}" if u.port else "")
+        except RuntimeError:  # no request attached
+            url = "the Relay node"
+        typer.secho(f"error: cannot reach {url}: {exc}", fg=typer.colors.RED, err=True)
+        raise SystemExit(1) from None
+
+
 if __name__ == "__main__":
-    app()
+    main()

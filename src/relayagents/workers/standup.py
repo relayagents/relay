@@ -50,6 +50,31 @@ class StandupDraft(BaseModel):
     cited_event_ids: list[str] = Field(default_factory=list)
 
 
+def reports_closed_as_done(events: list[Event]) -> set[str]:
+    """Reports that `report --close-item` turned into a done closure.
+
+    That tool call writes the report and then the closure, naming the report as its one parent,
+    so the closure already says the same thing under Done/Shipped. Only that exact pair matches:
+    one parent, the same author, the same item. Callers can publish closures with provenance of
+    their choosing, so the author check keeps anyone from hiding a teammate's report, and the
+    item check keeps a closure from hiding a report about something else.
+    """
+    reports = {
+        e.id: (e.actor.user_id, e.payload.item_id)
+        for e in events
+        if isinstance(e.payload, ReportPosted) and e.payload.item_id
+    }
+    out = set()
+    for e in events:
+        p = e.payload
+        if not (isinstance(p, ActionItemClosed) and p.resolution == "done"):
+            continue
+        parents = e.provenance.parent_event_ids
+        if len(parents) == 1 and reports.get(parents[0]) == (e.actor.user_id, p.item_id):
+            out.add(parents[0])
+    return out
+
+
 async def gather(
     session: AsyncSession, user_id: str, *, hours: int = 24, now: datetime | None = None
 ) -> StandupDraft:
@@ -59,11 +84,14 @@ async def gather(
         since=now - timedelta(hours=hours), user_id=user_id, limit=1000
     )
     draft = StandupDraft(user_id=user_id)
+    closed_reports = reports_closed_as_done(events)
     for e in events:
         p = e.payload
         if isinstance(p, ActionItemClosed):
             draft.done.append(f"{p.note or 'closed ' + p.item_id} [{e.id}]")
         elif isinstance(p, ReportPosted):
+            if e.id in closed_reports:
+                continue
             draft.doing.append(f"{p.text} [{e.id}]")
         elif isinstance(p, ActionItemUpdated) and p.status == "blocked":
             draft.blocked.append(f"{p.note or p.item_id} [{e.id}]")

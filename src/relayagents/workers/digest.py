@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 
 from relayagents.core.events import (
@@ -19,6 +20,7 @@ from relayagents.core.events import (
 from relayagents.core.indexing import index_later
 from relayagents.core.store import EventStore
 from relayagents.tools.context import Services
+from relayagents.workers.standup import reports_closed_as_done
 
 DIGEST_ACTOR = Actor.system("relay.digest")
 
@@ -27,27 +29,41 @@ def build_digest(
     events: list[Event], *, window_start: datetime, window_end: datetime
 ) -> DigestPosted:
     shipped, in_progress, blockers, needed, cited = [], [], [], [], []
+    closed_reports = reports_closed_as_done(events)  # already under Shipped, as their closure
+    shown: set[str] = set()  # events that produced a line of their own
+    standups: list[StandupPosted] = []
     for e in events:
         p = e.payload
         if isinstance(p, ActionItemClosed) and p.resolution == "done":
             shipped.append(f"{p.note or p.item_id} ({e.actor.user_id})")
-            cited.append(e.id)
+            shown.add(e.id)
         elif isinstance(p, ReportPosted):
-            in_progress.append(f"{p.text} ({e.actor.user_id})")
-            cited.append(e.id)
+            if e.id not in closed_reports:
+                in_progress.append(f"{p.text} ({e.actor.user_id})")
+                shown.add(e.id)
         elif isinstance(p, ActionItemUpdated) and p.status == "blocked":
             blockers.append(f"{p.note or p.item_id}")
-            cited.append(e.id)
+            shown.add(e.id)
         elif isinstance(p, StandupPosted):
-            shipped += [f"{d} ({p.user_id})" for d in p.done]
-            in_progress += [f"{d} ({p.user_id})" for d in p.doing]
-            blockers += list(p.blocked)
-            cited.append(e.id)
+            standups.append(p)
         elif isinstance(p, QuestionOpened) and not p.asked_of:
             needed.append(p.text)
-            cited.append(e.id)
-        elif isinstance(p, DecisionMade):
-            cited.append(e.id)
+            shown.add(e.id)
+        elif not isinstance(p, DecisionMade):
+            continue
+        cited.append(e.id)
+
+    def from_standup(p: StandupPosted, lines: list[str]) -> list[str]:
+        # A standup repeats the events it cites as "text [evt_...]". Skip a line only when the
+        # event it cites is one of the standup's own citations and already has its own line here.
+        return [
+            x for x in lines if not (_cited_id(x) in p.cited_event_ids and _cited_id(x) in shown)
+        ]
+
+    for p in standups:
+        shipped += [f"{d} ({p.user_id})" for d in from_standup(p, p.done)]
+        in_progress += [f"{d} ({p.user_id})" for d in from_standup(p, p.doing)]
+        blockers += from_standup(p, p.blocked)
     quiet = not (shipped or in_progress or blockers or needed)
     return DigestPosted(
         window_start=window_start,
@@ -59,6 +75,14 @@ def build_digest(
         cited_event_ids=cited,
         quiet=quiet,
     )
+
+
+_CITED = re.compile(r"\[(evt_[A-Za-z0-9]+)\]\s*$")
+
+
+def _cited_id(line: str) -> str | None:
+    m = _CITED.search(line)
+    return m.group(1) if m else None
 
 
 def _dedupe(xs: list[str]) -> list[str]:

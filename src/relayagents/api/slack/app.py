@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from typing import Any
 
 import structlog
 from slack_bolt.adapter.socket_mode.aiohttp import AsyncSocketModeHandler
 from slack_bolt.async_app import AsyncApp
+from slack_sdk.errors import SlackApiError
+from slack_sdk.web.async_client import AsyncWebClient
 from sqlalchemy import select
 
 from relayagents.core import approvals
@@ -91,25 +94,26 @@ async def _resolve_from_slack(
                 text="Only the person this approval was requested of can resolve it.",
             )
             return
+        was = row.status
         row = await approvals.resolve(
             session, approval_id=approval_id, decision=decision, resolved_by=user_id
         )
         await session.commit()
-    verdict = ":white_check_mark: Approved" if decision == "approved" else ":no_entry: Denied"
+    if was != "pending" or row.status != decision:
+        # The click changed nothing: say so, and show what was actually recorded below.
+        with contextlib.suppress(Exception):
+            await client.chat_postEphemeral(
+                channel=body["channel"]["id"],
+                user=slack_user,
+                text=f"Nothing was done: this approval is already {row.status}.",
+            )
+    # Render the recorded outcome, never the button that was pressed.
+    text, blocks = approvals.settled_message(
+        row, by=f"<@{slack_user}>" if row.resolved_by == user_id else None
+    )
     with contextlib.suppress(Exception):
         await client.chat_update(
-            channel=body["channel"]["id"],
-            ts=body["message"]["ts"],
-            text=f"{verdict} by <@{slack_user}>: {row.action}",
-            blocks=[
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"{verdict} by <@{slack_user}>\n> {row.action}\n`{approval_id}`",
-                    },
-                }
-            ],
+            channel=body["channel"]["id"], ts=body["message"]["ts"], text=text, blocks=blocks
         )
 
 
@@ -145,6 +149,20 @@ async def _login_from_slack(
         )
 
 
+# Slack error codes that mean the token itself will never work: retrying cannot fix them.
+TOKEN_REJECTED = frozenset(
+    {
+        "invalid_auth",
+        "not_authed",
+        "account_inactive",
+        "token_revoked",
+        "token_expired",
+        "not_allowed_token_type",
+        "missing_scope",
+    }
+)
+
+
 class SlackRunner:
     """Runs the Socket Mode connection inside the API process lifespan."""
 
@@ -152,11 +170,41 @@ class SlackRunner:
         self.services = services
         self.app = build_slack_app(services)
         self.handler = AsyncSocketModeHandler(self.app, services.settings.slack_app_token)
+        self._connecting: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
-        await self.handler.connect_async()
+        """Check both tokens once, then connect in the background.
+
+        slack_sdk's ``connect_async()`` retries every failure forever, ``invalid_auth`` included,
+        so awaiting it here let a bad token or a Slack outage hang API startup and ``/health``.
+        A token Slack rejects raises from here; the lifespan logs it and runs without Slack.
+        Anything else (Slack unreachable, rate limited, or having a bad moment) is not a verdict
+        on the tokens, so that keeps retrying in the background like any later disconnect.
+        """
+        settings = self.services.settings
+        try:
+            await AsyncWebClient(token=settings.slack_bot_token).auth_test()
+            await AsyncWebClient().apps_connections_open(app_token=settings.slack_app_token)
+        except SlackApiError as exc:
+            if exc.response.get("error") in TOKEN_REJECTED:
+                raise
+            log.warning("slack.unavailable_at_start", error=str(exc))
+        except Exception as exc:
+            log.warning("slack.unreachable_at_start", error=str(exc))
+        self._connecting = asyncio.create_task(self._connect(), name="slack-socket-mode")
+
+    async def _connect(self) -> None:
+        try:
+            await self.handler.connect_async()
+        except Exception as exc:
+            log.warning("slack.socket_mode.connect_failed", error=str(exc))
+            return
         log.info("slack.socket_mode.connected")
 
     async def stop(self) -> None:
+        if self._connecting is not None:
+            self._connecting.cancel()
+            with contextlib.suppress(BaseException):
+                await self._connecting
         with contextlib.suppress(Exception):
             await self.handler.close_async()

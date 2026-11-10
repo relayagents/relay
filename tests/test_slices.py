@@ -11,7 +11,7 @@ from relayagents.core import projections
 from relayagents.core.store import EventStore
 from relayagents.tools.rest import TOOLS_PREFIX
 from relayagents.workers.digest import post_digest
-from tests.conftest import FIXTURES, auth
+from tests.conftest import FIXTURES, auth, create_item
 
 
 async def test_meeting_upload_with_transcript(client: httpx.AsyncClient, team, services) -> None:  # type: ignore[no-untyped-def]
@@ -73,6 +73,7 @@ async def test_standup_draft_cites_events_and_asks_instead_of_asserting(
         },
         headers=auth(team["ada"]["human"]),
     )
+    await create_item(client, team["ada"]["human"], "item_1", "grace", "Migrate the cache")
     await client.post(
         f"{TOOLS_PREFIX}/report",
         json={"text": "cache migration merged", "item_id": "item_1"},
@@ -114,6 +115,7 @@ async def test_digest_quiet_and_busy(services, team, client: httpx.AsyncClient) 
     ev = await post_digest(services)
     assert ev.payload.quiet is True  # type: ignore[attr-defined]
     assert services.chat.posts[-1]["text"].endswith("no update.")
+    await create_item(client, team["ada"]["human"], "item_1", "grace", "Ship the cache")
     await client.post(
         f"{TOOLS_PREFIX}/report",
         json={"text": "shipped the cache", "item_id": "item_1", "close_item": True},
@@ -175,3 +177,159 @@ def test_workspace_mcp_is_off_unless_configured(settings) -> None:  # type: igno
         "RELAY_WORKSPACE_MCP_URL: ${GOOGLE_OAUTH_CLIENT_ID:+http://workspace-mcp:8000/mcp}"
         in compose
     )
+
+
+async def test_standup_lists_a_report_that_closed_its_item_only_as_done(
+    client: httpx.AsyncClient, team
+) -> None:  # type: ignore[no-untyped-def]
+    # First compose boot: `report --close-item` put the same line under Done and under Doing.
+    await create_item(client, team["ada"]["human"], "item_c", "grace", "Ship the cache")
+    await client.post(
+        f"{TOOLS_PREFIX}/report",
+        json={"text": "cache half done", "item_id": "item_c"},
+        headers=auth(team["grace"]["agent"]),
+    )
+    await client.post(
+        f"{TOOLS_PREFIX}/report",
+        json={"text": "cache shipped", "item_id": "item_c", "close_item": True},
+        headers=auth(team["grace"]["agent"]),
+    )
+    await client.post(
+        f"{TOOLS_PREFIX}/report",
+        json={"text": "started on the eval doc"},
+        headers=auth(team["grace"]["agent"]),
+    )
+    draft = (await client.get("/v1/standups/draft", headers=auth(team["grace"]["agent"]))).json()
+    assert [d.split(" [")[0] for d in draft["done"]] == ["cache shipped"]
+    # Only the report the closure came from is folded into Done; earlier progress stays.
+    assert [d.split(" [")[0] for d in draft["doing"]] == [
+        "cache half done",
+        "started on the eval doc",
+    ]
+    assert draft["user_id"] == "grace"
+
+
+def test_digest_says_each_thing_once() -> None:
+    # First compose boot: `report --close-item` listed one line under Shipped and In progress, and
+    # a posted standup repeats the events it cites, in a form _dedupe cannot match.
+    from datetime import UTC, datetime, timedelta
+
+    from relayagents.core.events import (
+        ActionItemClosed,
+        Actor,
+        Event,
+        Provenance,
+        ReportPosted,
+        StandupPosted,
+    )
+    from relayagents.workers.digest import build_digest
+
+    agent = Actor.agent("grace.claude-code")
+    report = Event.new(
+        ReportPosted(text="cache shipped", item_id="item_c"), actor=agent, source="api"
+    )
+    closed = Event.new(
+        ActionItemClosed(item_id="item_c", note="cache shipped"),
+        actor=agent,
+        source="api",
+        provenance=Provenance(parent_event_ids=[report.id]),
+    )
+    other = Event.new(ReportPosted(text="eval doc started"), actor=agent, source="api")
+    standup = Event.new(
+        StandupPosted(
+            user_id="grace",
+            mode="auto",
+            done=[f"cache shipped [{closed.id}]"],
+            doing=[f"eval doc started [{other.id}]", "reviewing #12 [evt_from_last_week]"],
+            cited_event_ids=[closed.id, other.id, "evt_from_last_week"],
+        ),
+        actor=agent,
+        source="api",
+    )
+    now = datetime.now(UTC)
+    d = build_digest(
+        [report, closed, other, standup], window_start=now - timedelta(days=1), window_end=now
+    )
+    assert d.shipped == ["cache shipped (grace)"]
+    assert d.in_progress == [
+        "eval doc started (grace)",
+        "reviewing #12 [evt_from_last_week] (grace)",
+    ]
+
+
+def test_digest_dedupe_never_hides_what_it_did_not_show() -> None:
+    # Security review of the dedupe above: a teammate's closure must not hide someone's report, and
+    # a standup line may be skipped only when its own cited event already has a line here.
+    from datetime import UTC, datetime, timedelta
+
+    from relayagents.core.events import (
+        ActionItemClosed,
+        Actor,
+        DecisionMade,
+        Event,
+        Provenance,
+        ReportPosted,
+        StandupPosted,
+    )
+    from relayagents.workers.digest import build_digest
+
+    grace, ada = Actor.agent("grace.claude-code"), Actor.human("ada")
+    report = Event.new(
+        ReportPosted(text="half the cache", item_id="item_c"), actor=grace, source="api"
+    )
+    closed_by_ada = Event.new(
+        ActionItemClosed(item_id="item_c", note="ada closed it"),
+        actor=ada,
+        source="api",
+        provenance=Provenance(parent_event_ids=[report.id]),
+    )
+    decision = Event.new(
+        DecisionMade(decision_id="dec_1", statement="use pgvector"), actor=ada, source="api"
+    )
+    standup = Event.new(
+        StandupPosted(
+            user_id="grace",
+            mode="auto",
+            doing=[f"talked pgvector [{decision.id}]", f"claims ada's line [{closed_by_ada.id}]"],
+            cited_event_ids=[decision.id],
+        ),
+        actor=grace,
+        source="api",
+    )
+    now = datetime.now(UTC)
+    d = build_digest(
+        [report, closed_by_ada, decision, standup],
+        window_start=now - timedelta(days=1),
+        window_end=now,
+    )
+    assert d.shipped == ["ada closed it (ada)"]
+    assert d.in_progress == [
+        "half the cache (grace)",
+        f"talked pgvector [{decision.id}] (grace)",
+        f"claims ada's line [{closed_by_ada.id}] (grace)",
+    ]
+    assert {report.id, closed_by_ada.id, decision.id, standup.id} <= set(d.cited_event_ids)
+
+
+def test_a_closure_folds_only_its_own_report_on_the_same_item() -> None:
+    # Security review: closures published over POST /v1/events carry caller-chosen provenance, so
+    # the match also needs the same item and exactly one parent.
+    from relayagents.core.events import ActionItemClosed, Actor, Event, Provenance, ReportPosted
+    from relayagents.workers.standup import reports_closed_as_done
+
+    grace = Actor.agent("grace.claude-code")
+    on_c = Event.new(ReportPosted(text="c done", item_id="item_c"), actor=grace, source="api")
+    on_d = Event.new(ReportPosted(text="d progress", item_id="item_d"), actor=grace, source="api")
+    loose = Event.new(ReportPosted(text="no item"), actor=grace, source="api")
+
+    def close(item: str, *parents: str) -> Event:
+        return Event.new(
+            ActionItemClosed(item_id=item),
+            actor=grace,
+            source="api",
+            provenance=Provenance(parent_event_ids=list(parents)),
+        )
+
+    events = [on_c, on_d, loose, close("item_c", on_c.id), close("item_c", on_d.id)]
+    events += [close("item_c", loose.id), close("item_d", on_d.id, loose.id)]
+    assert reports_closed_as_done(events) == {on_c.id}
