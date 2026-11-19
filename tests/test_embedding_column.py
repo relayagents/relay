@@ -49,6 +49,24 @@ async def test_sqlite_has_no_width_to_manage(services: Services) -> None:
     assert services.embedder is not None
 
 
+def test_migrate_upgrades_the_database_named_only_in_dotenv(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    # Alembic's env.py reads only the process environment; the resize reads Settings, which
+    # also reads .env. Both steps must target the one database Settings names.
+    db_file = tmp_path / "from-dotenv.db"
+    (tmp_path / ".env").write_text(f"RELAY_DATABASE_URL=sqlite+aiosqlite:///{db_file}\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("RELAY_DATABASE_URL", raising=False)
+    reset_settings_cache()
+    try:
+        result = CliRunner().invoke(cli.app, ["migrate"])
+    finally:
+        reset_settings_cache()
+    assert result.exit_code == 0, result.output
+    assert db_file.exists()
+
+
 @pytest.mark.parametrize("dim", [0, 2001])
 async def test_width_outside_the_hnsw_limit_is_refused(services: Services, dim: int) -> None:
     with pytest.raises(ValueError, match=r"1\.\.2000"):
@@ -166,3 +184,32 @@ def test_workers_turn_the_vector_leg_off_on_a_mismatched_column(
 
     reason, embedder = asyncio.run(check(1536))
     assert reason is None and embedder is not None
+
+
+@needs_pg
+def test_replay_rebuild_graph_fails_loudly_on_a_mismatched_column(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asyncio.run(_reset_schema())
+    _migrate(monkeypatch, 1536)
+    monkeypatch.setattr(
+        "relayagents.connectors.memory.embeddings.make_embedder", lambda _s: StubEmbedder()
+    )
+
+    def replay(dim: int, *flags: str) -> Any:
+        monkeypatch.setenv("RELAY_DATABASE_URL", PG_URL)
+        monkeypatch.setenv("RELAY_EMBEDDING_DIM", str(dim))
+        reset_settings_cache()
+        try:
+            return CliRunner().invoke(cli.app, ["replay", *flags])
+        finally:
+            reset_settings_cache()
+
+    result = replay(1024, "--rebuild-graph")
+    assert result.exit_code == 1
+    assert "RELAY_EMBEDDING_DIM is 1024" in result.output
+
+    # Rebuilding projections alone does not need the vector column, so it still works.
+    result = replay(1024, "--rebuild-projections")
+    assert result.exit_code == 0, result.output
+    assert "projections rebuilt" in result.output
