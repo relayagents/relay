@@ -1,6 +1,6 @@
 # ADR-0002: Relay is a substrate, not an agent framework
 
-**Status:** accepted · 2026-09-03
+**Status:** accepted · 2026-09-03 · amended by [ADR-0011](0011-session-agents-and-pr-watcher.md): Relay also observes GitHub directly, with a read-only token in the workers, instead of seeing only what agents publish
 
 ## Context
 
