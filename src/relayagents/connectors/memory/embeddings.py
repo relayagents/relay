@@ -99,25 +99,27 @@ def make_embedder(settings: Settings) -> PydanticAIEmbedder | None:
     return PydanticAIEmbedder(name, dim=settings.embedding_dim)
 
 
-async def disable_on_column_mismatch(services: Any) -> None:
+async def disable_on_column_mismatch(services: Any) -> str | None:
     """Turn the vector leg off when ``events.embedding`` is not RELAY_EMBEDDING_DIM wide.
 
     Normally impossible (relay-api runs ``relay migrate`` before workers start), but a worker
     started against an unmigrated column would otherwise fail every write and every query with a
     database error. Off means recall degrades to the lexical leg, with one log line saying why.
+    Returns that reason, or ``None`` when the embedder was kept.
     """
     from relayagents.core.embedding_column import embedding_dim_mismatch
 
     if services.embedder is None:
-        return
+        return None
     try:
         reason = await embedding_dim_mismatch(services.db, services.settings.embedding_dim)
     except Exception as exc:  # DB not reachable yet: keep the embedder, writes will tell
         log.warning("embeddings.column_unchecked", error=str(exc)[:200])
-        return
+        return None
     if reason:
         log.error("embeddings.disabled", reason=reason)
         services.embedder = None
+    return reason
 
 
 async def embed_events(db: Database, embedder: Embedder, events: Sequence[Event]) -> int:

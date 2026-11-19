@@ -588,12 +588,17 @@ def replay(
 
     async def run() -> None:
         services = build_services(get_settings(), role="worker")
-        await disable_on_column_mismatch(services)
+        mismatch = await disable_on_column_mismatch(services)
         if rebuild_projections:
             async with services.db.session() as session:
                 n = await projections.rebuild(session, EventStore(session))
                 await session.commit()
             typer.echo(f"projections rebuilt from {n} events")
+        if rebuild_graph and mismatch:
+            # An explicit rebuild must not quietly skip embeddings; the reason names the fix.
+            await services.db.dispose()
+            typer.echo(f"cannot rebuild embeddings: {mismatch}", err=True)
+            raise typer.Exit(1)
         if rebuild_graph:
             n = await rebuild_graph_job({"services": services})
             typer.echo(
@@ -644,13 +649,16 @@ def migrate(revision: str = "head") -> None:
     from relayagents.core.db import Database
     from relayagents.core.embedding_column import ensure_embedding_dim
 
+    settings = get_settings()
     cfg = Config(str(Path(__file__).resolve().parents[3] / "alembic.ini"))
     cfg.set_main_option(
         "script_location", str(Path(__file__).resolve().parents[1] / "core" / "migrations")
     )
+    # Upgrade the database Settings names (environment or .env), the same one the resize below
+    # targets. ConfigParser treats % as interpolation, so escape it (percent-encoded passwords).
+    cfg.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
     command.upgrade(cfg, revision)
 
-    settings = get_settings()
     if settings.is_sqlite or revision != "head":
         return  # SQLite has no width; a partial upgrade may not have the column yet
 
