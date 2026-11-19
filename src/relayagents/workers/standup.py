@@ -281,13 +281,44 @@ async def _approve_and_post(
     draft: StandupDraft,
     user: UserRow,
     approval_id: str | None,
-) -> Event:
+) -> Event | str:
+    """Post the draft on the owner's click, or say why not: only the click that resolves the
+    approval posts, so a double click, a Slack retry, or an earlier CLI approval cannot post twice,
+    and a draft past its expiry is not posted at all."""
     if approval_id:
-        with contextlib.suppress(KeyError):  # the row may have expired; the click still counts
-            await approvals.resolve(
+        try:
+            row, won = await approvals.resolve_once(
                 session, approval_id=approval_id, decision="approved", resolved_by=user.id
             )
+        except KeyError:
+            pass  # no approval row behind this draft: the owner's click is the approval
+        else:
+            if not won:
+                return row.status
     return await _post(services, session, draft, user, mode="draft", actor=Actor.human(user.id))
+
+
+NOT_POSTED = {
+    "approved": (":white_check_mark:", "This standup was already posted."),
+    "expired": (
+        ":hourglass:",
+        "This draft expired. The next one arrives at your standup time, or run `relay standup draft`.",
+    ),
+    "denied": (":no_entry:", "This draft was declined, so it was not posted."),
+}
+
+
+def _posted_blocks(ev: Event | str, *, edited: bool = False) -> tuple[str, list[dict[str, Any]]]:
+    if isinstance(ev, str):
+        emoji, text = NOT_POSTED.get(ev, (":warning:", f"This draft is {ev}; nothing was posted."))
+        return text, [{"type": "section", "text": {"type": "mrkdwn", "text": f"{emoji} {text}"}}]
+    label = "Standup posted (edited)." if edited else "Standup posted."
+    return f"Standup posted ({ev.id}).", [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f":white_check_mark: {label} `{ev.id}`"},
+        }
+    ]
 
 
 async def post_standup_from_draft(services: Services, body: dict[str, Any], client: Any) -> None:
@@ -303,16 +334,9 @@ async def post_standup_from_draft(services: Services, body: dict[str, Any], clie
             return
         ev = await _approve_and_post(services, session, draft, user, approval_id)
         await session.commit()
+    text, blocks = _posted_blocks(ev)
     await client.chat_update(
-        channel=body["channel"]["id"],
-        ts=body["message"]["ts"],
-        text=f"Standup posted ({ev.id}).",
-        blocks=[
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": f":white_check_mark: Standup posted. `{ev.id}`"},
-            }
-        ],
+        channel=body["channel"]["id"], ts=body["message"]["ts"], text=text, blocks=blocks
     )
 
 
@@ -379,18 +403,6 @@ async def post_standup_from_modal(services: Services, body: dict[str, Any], clie
             return
         ev = await _approve_and_post(services, session, draft, user, meta.get("approval_id"))
         await session.commit()
+    text, blocks = _posted_blocks(ev, edited=True)
     with contextlib.suppress(Exception):
-        await client.chat_update(
-            channel=meta["channel"],
-            ts=meta["ts"],
-            text=f"Standup posted ({ev.id}).",
-            blocks=[
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f":white_check_mark: Standup posted (edited). `{ev.id}`",
-                    },
-                }
-            ],
-        )
+        await client.chat_update(channel=meta["channel"], ts=meta["ts"], text=text, blocks=blocks)
