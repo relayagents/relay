@@ -106,7 +106,7 @@ TOOLS: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         name="ask",
-        description="Ask a teammate's agent a question over A2A (through Relay's broker). The teammate is notified in Slack. Threaded.",
+        description="Ask a teammate a question. They are told in Slack; if they have a registered agent it also receives the question over A2A. Threaded.",
         input_model=schemas.AskInput,
         output_model=schemas.AskOutput,
         handler=handlers.ask,
@@ -114,7 +114,14 @@ TOOLS: tuple[ToolSpec, ...] = (
         action_type="relay.ask",
         positional=("user", "question"),
         render=lambda o: (
-            f"task {o.task_id} → {o.to_agent} [{o.state}] thread {o.thread_id}"
+            (
+                f"task {o.task_id} → {o.to_agent}"
+                if o.task_id
+                else "told the person in Slack (no agent registered)"
+                if o.notified
+                else "not delivered: no agent registered and the Slack DM failed (question recorded)"
+            )
+            + f" [{o.state}] thread {o.thread_id}"
             + (f"\n{o.answer}" if o.answer else "")
         ),  # type: ignore[attr-defined]
     ),

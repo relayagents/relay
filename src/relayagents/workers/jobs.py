@@ -20,6 +20,7 @@ from relayagents.tools.context import Services
 from relayagents.workers import pm
 from relayagents.workers.digest import post_digest
 from relayagents.workers.extraction import make_extractor
+from relayagents.workers.standup import run_due_standups
 
 log = structlog.get_logger()
 
@@ -228,6 +229,12 @@ async def embed_backlog(ctx: dict[str, Any]) -> int:
     async with services.db.session() as session:
         events = await EventStore(session).unembedded(sorted(INDEXED_TYPES))
     return await embed_events(services.db, services.embedder, events) if events else 0
+
+
+async def scheduled_standups(ctx: dict[str, Any]) -> list[str]:
+    """Per-minute cron: draft and submit for every user whose standup time has arrived."""
+    services: Services = ctx["services"]
+    return await run_due_standups(services)
 
 
 async def daily_digest(ctx: dict[str, Any]) -> str:

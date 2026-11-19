@@ -12,7 +12,7 @@ Every fact in Relay is an append-only `Event` (`src/relayagents/core/events.py`)
 | `actor` | `{kind: human \| agent \| system, id}` | agents are `<user>.<harness>`; `Actor.user_id` gives the owning human |
 | `source` | `meeting \| slack \| workspace \| github \| a2a \| cli \| api` | where it entered Relay |
 | `visibility` | `team \| public` | Relay has no private scope by design |
-| `thread_id` | string or null | meeting id, A2A context id, approval id, item id, `standup:<user>:<date>`, `digest:<date>` |
+| `thread_id` | string or null | meeting id, A2A context id, approval id, item id, `standup:<user>:<date>` (the user's local date), `digest:<date>` |
 | `payload` | typed, discriminated on `type` | extra fields are rejected |
 | `provenance` | `{segment_ids, tool_call_ids, parent_event_ids}` | how to audit where this came from |
 
@@ -59,6 +59,7 @@ Adding a type: add the payload class and include it in `AnyPayload`, add a sampl
 | `agents` | operational | A2A AgentCard registry, optional `push_url` |
 | `a2a_tasks` | operational | store-and-forward inbox/outbox; messages are also events |
 | `approvals` | operational | pending/approved/denied/expired, Slack message ref for updates |
+| `standup_claims` | operational | one row per user per local day, inserted before a scheduled standup goes out so overlapping cron runs deliver it once |
 | `meetings` | operational | status machine `queued → transcribing → extracting → done | failed`, file paths |
 
 Migrations live in `src/relayagents/core/migrations` (Alembic, async). `relay migrate` applies them; the API container does so on start.

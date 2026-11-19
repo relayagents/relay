@@ -24,7 +24,9 @@ app = typer.Typer(
     pretty_exceptions_show_locals=False,  # locals hold tokens; never print them in a traceback
 )
 meeting_app = typer.Typer(help="Meetings: upload audio or transcripts.")
-standup_app = typer.Typer(help="Standups on behalf of a teammate (used by the agent's cron).")
+standup_app = typer.Typer(
+    help="Standup drafts by hand; the workers draft and submit at your standup_time on their own."
+)
 app.add_typer(meeting_app, name="meeting")
 app.add_typer(standup_app, name="standup")
 
@@ -147,9 +149,7 @@ def me(
 
 @app.command("setup-agent")
 def setup_agent(
-    agent: Annotated[
-        str, typer.Argument(help="claude-code | codex | opencode | cursor | hermes | generic")
-    ],
+    agent: Annotated[str, typer.Argument(help="claude-code | codex | opencode | cursor | generic")],
     write: Annotated[bool, typer.Option(help="Apply the steps instead of printing them.")] = False,
     project: Annotated[
         Path | None,
@@ -281,32 +281,44 @@ def add_user(
     github_login: Annotated[str | None, typer.Option()] = None,
     timezone: Annotated[str, typer.Option()] = "UTC",
     admin: Annotated[bool, typer.Option("--admin", help="Make this user an admin")] = False,
-    no_container: Annotated[
-        bool, typer.Option("--no-container", help="Register only; do not start a Hermes container")
-    ] = False,
     reissue: Annotated[
-        bool, typer.Option("--reissue", help="Mint new tokens for an existing user")
+        bool, typer.Option("--reissue", help="Mint a new human token for an existing user")
     ] = False,
-    agents_dir: Annotated[
-        Path, typer.Option(help="Where per-user agent env files are written (host side)")
-    ] = Path("var/agents"),
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Print machine-readable JSON (used by scripts/add-user.sh)"),
     ] = False,
 ) -> None:
-    """Provision a teammate: user, tokens, AgentCard, and (with Docker on this machine) a Hermes container.
+    """Create a teammate: the user record and their human token. Runs on the Relay node.
 
-    Inside the relay-api container there is no Docker; run scripts/add-user.sh on the node instead.
+    Agents are not provisioned here. Each person connects their own coding agent per project
+    with `relay setup-agent`, which mints that agent's token (ADR-0010, ADR-0011).
     """
     from fastapi import HTTPException
+    from pydantic import ValidationError
 
     from relayagents.api.app import build_services
     from relayagents.api.routes.users import AddUserIn, create_user_with_tokens
-    from relayagents.connectors.hermes import HermesUserAgent
     from relayagents.core.config import get_settings
     from relayagents.core.events import Actor
 
+    try:
+        body = AddUserIn(
+            id=user_id,
+            display_name=name or user_id,
+            email=email,
+            slack_user_id=slack_user_id,
+            github_login=github_login,
+            timezone=timezone,
+            is_admin=admin,
+            reissue=reissue,
+        )
+    except ValidationError as exc:
+        for err in exc.errors():
+            typer.secho(
+                f"error: {err['msg'].removeprefix('Value error, ')}", fg=typer.colors.RED, err=True
+            )
+        raise typer.Exit(1) from exc
     settings = get_settings()
 
     async def run() -> None:
@@ -315,43 +327,17 @@ def add_user(
             await services.db.create_all()
         try:
             out = await create_user_with_tokens(
-                services,
-                AddUserIn(
-                    id=user_id,
-                    display_name=name or user_id,
-                    email=email,
-                    slack_user_id=slack_user_id,
-                    github_login=github_login,
-                    timezone=timezone,
-                    is_admin=admin,
-                    reissue=reissue,
-                ),
-                issued_by=Actor.system("relay.cli.admin"),
+                services, body, issued_by=Actor.system("relay.cli.admin")
             )
         except HTTPException as exc:
             typer.secho(f"error: {exc.detail}", fg=typer.colors.RED, err=True)
             raise typer.Exit(1) from exc
         finally:
             await services.db.dispose()
-        prov: dict[str, Any] = {"started": False}
-        if not no_container:
-            prov = await HermesUserAgent(agents_dir).provision(
-                user_id, relay_url=settings.public_url, relay_token=out.agent_token
-            )
         if json_output:
-            _echo_json({**out.model_dump(), "provision": prov})
+            _echo_json(out.model_dump())
             return
-        typer.echo(
-            f"user {out.user.id} {'updated' if reissue else 'created'}. Agent {out.agent_id} registered."
-        )
-        if no_container:
-            typer.echo(
-                "hermes: not started (--no-container). On the node: scripts/add-user.sh " + user_id
-            )
-        elif prov["started"]:
-            typer.echo(f"hermes: started {prov['container']} (credentials in {prov['env_file']})")
-        else:
-            typer.echo(f"hermes: {prov.get('hint')}\n  {prov.get('command')}")
+        typer.echo(f"user {out.user.id} {'updated' if reissue else 'created'}.")
         typer.echo(
             "\n== give this to the person (human token; used once by `relay login --token`) =="
         )

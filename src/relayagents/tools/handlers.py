@@ -3,7 +3,6 @@ changes state. Handlers are transport-agnostic: the same function serves MCP, CL
 
 from __future__ import annotations
 
-import contextlib
 import re
 from datetime import UTC, datetime
 
@@ -25,6 +24,7 @@ from relayagents.core.events import (
 )
 from relayagents.core.ids import new_id
 from relayagents.core.indexing import index_later
+from relayagents.core.models import UserRow
 from relayagents.core.permissions import is_forbidden, policy_for
 from relayagents.core.projections import apply as project
 from relayagents.core.projections import list_decisions, list_items
@@ -133,7 +133,7 @@ async def events(ctx: ToolContext, inp: EventsInput) -> EventsOutput:
     if not inp.include_tool_calls and not (types and any(t.startswith("tool.") for t in types)):
         # Filter in SQL so audit events do not consume the requested result limit.
         types = [t for t in (types or EVENT_TYPES) if not t.startswith("tool.")]
-    # A bare user id ("grace") means the human and all of their agents; "grace.hermes" is exact.
+    # A bare user id ("grace") means the human and all of their agents; "grace.claude-code" is exact.
     is_user = bool(actor) and "." not in actor
     async with ctx.db.session() as session:
         found = await EventStore(session).query(
@@ -193,29 +193,30 @@ def _source_for(ctx: ToolContext):  # type: ignore[no-untyped-def]
 
 
 async def ask(ctx: ToolContext, inp: AskInput) -> AskOutput:
+    """Tell a teammate in Slack; also hand the question to their agent when one is registered."""
     target_user = ctx.resolve_user(inp.user)
     assert target_user is not None
     async with ctx.db.session() as session:
+        if await session.get(UserRow, target_user) is None:
+            raise ToolError(f"unknown user {target_user!r}")
         agent = await broker.agent_for_user(session, target_user)
-        if agent is None:
-            raise ToolError(
-                f"no agent registered for user {target_user!r}; they need to run `relay add-user` / `relay setup-agent`"
-            )
         question_id = new_id("q")
         thread_id = inp.thread_id or new_id("thr")
-        msg = Message.from_text(
-            inp.question,
-            context_id=thread_id,
-            metadata={"question_id": question_id, "from_user": ctx.user_id},
-        )
-        task = await broker.send_message(
-            session,
-            from_actor=ctx.actor,
-            to_agent=agent.id,
-            message=msg,
-            metadata={"question_id": question_id},
-            surfaced_to=[target_user],
-        )
+        task = None
+        if agent is not None:
+            msg = Message.from_text(
+                inp.question,
+                context_id=thread_id,
+                metadata={"question_id": question_id, "from_user": ctx.user_id},
+            )
+            task = await broker.send_message(
+                session,
+                from_actor=ctx.actor,
+                to_agent=agent.id,
+                message=msg,
+                metadata={"question_id": question_id},
+                surfaced_to=[target_user],
+            )
         q = Event.new(
             QuestionOpened(question_id=question_id, text=inp.question, asked_of=target_user),
             actor=ctx.actor,
@@ -226,26 +227,36 @@ async def ask(ctx: ToolContext, inp: AskInput) -> AskOutput:
         await EventStore(session).append(q)
         await session.commit()
     await index_later(ctx.services, [q])
+    notified = False
     if ctx.services.chat is not None:
-        with contextlib.suppress(Exception):
+        # Told as a person either way: an agent that also has it does not act on it (ADR-0011).
+        also = f"; your agent `{agent.id}` also has it" if agent is not None else ""
+        reply = "" if agent is not None else f"\nReply to `{ctx.user_id}` directly."
+        try:
             await ctx.services.chat.dm(
                 target_user,
-                f":speech_balloon: `{ctx.actor.id}` asked your agent (thread `{thread_id}`):\n> {inp.question}",
+                f":speech_balloon: `{ctx.actor.id}` asked you (thread `{thread_id}`{also}):\n"
+                f"> {inp.question}{reply}",
             )
+            notified = True
+        except Exception as exc:
+            # the error type only: a Slack error can echo the request, which holds the question
+            log.warning("ask.dm_failed", user=target_user, error_type=type(exc).__name__)
     answer = None
-    state = task.status.state
-    if inp.wait_s:
+    state = task.status.state if task is not None else "human_only"
+    if task is not None and inp.wait_s:
         done = await broker.wait_for_terminal(ctx.db.sessions, task.id, timeout_s=inp.wait_s)
         if done is not None:
             state = done.status.state
             if done.history and done.history[-1].role == "agent":
                 answer = done.history[-1].text
     return AskOutput(
-        task_id=task.id,
+        task_id=task.id if task is not None else None,
         thread_id=thread_id,
         question_id=question_id,
-        to_agent=agent.id,
+        to_agent=agent.id if agent is not None else None,
         state=state,
+        notified=notified,
         answer=answer,
     )
 
@@ -257,6 +268,11 @@ async def request_approval(ctx: ToolContext, inp: RequestApprovalInput) -> Reque
     if is_forbidden(inp.action_type):
         raise ToolError(
             f"action type {inp.action_type!r} is forbidden by policy; see docs/permissions.md"
+        )
+    if inp.action_type.startswith("standup."):
+        # Approving one of these posts a standup, so only the standup path may open them.
+        raise ToolError(
+            f"action type {inp.action_type!r} is reserved; submit a standup with `relay standup submit`"
         )
     async with ctx.db.session() as session:
         row = await approvals.request(
