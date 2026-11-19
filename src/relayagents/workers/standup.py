@@ -21,7 +21,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relayagents.core import approvals
@@ -36,7 +37,7 @@ from relayagents.core.events import (
     StandupPosted,
 )
 from relayagents.core.indexing import index_later
-from relayagents.core.models import UserRow
+from relayagents.core.models import StandupClaimRow, UserRow
 from relayagents.core.projections import list_items
 from relayagents.core.store import EventStore
 from relayagents.tools.context import Services
@@ -284,13 +285,43 @@ async def run_due_standups(services: Services, *, now: datetime | None = None) -
             async with services.db.session() as session:
                 if await scheduled_today(session, user.id, local):
                     continue
-                draft = await gather(session, user.id, now=now)
-            await submit(services, draft, actor=SCHEDULER, now=now)
+            if not await claim_standup(services, user.id, local, now):
+                continue  # an overlapping tick already has this user's standup for today
+            try:
+                async with services.db.session() as session:
+                    draft = await gather(session, user.id, now=now)
+                await submit(services, draft, actor=SCHEDULER, now=now)
+            except Exception:
+                await release_standup(services, user.id, local)  # the next minute retries
+                raise
         except Exception:
             log.exception("standup.scheduled_failed", user=user.id)
             continue
         done.append(user.id)
     return done
+
+
+async def claim_standup(services: Services, user_id: str, local: datetime, now: datetime) -> bool:
+    """Claim this user's standup for their local day. Of overlapping ticks, only the one whose
+    insert commits gets True; the primary key turns the others away."""
+    try:
+        async with services.db.session() as session:
+            session.add(StandupClaimRow(user_id=user_id, local_date=local.date(), claimed_at=now))
+            await session.commit()
+    except IntegrityError:
+        return False
+    return True
+
+
+async def release_standup(services: Services, user_id: str, local: datetime) -> None:
+    """Drop a claim whose delivery failed, so a later tick in the catch-up window tries again."""
+    async with services.db.session() as session:
+        await session.execute(
+            delete(StandupClaimRow).where(
+                StandupClaimRow.user_id == user_id, StandupClaimRow.local_date == local.date()
+            )
+        )
+        await session.commit()
 
 
 async def _post(
