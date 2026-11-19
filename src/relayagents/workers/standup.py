@@ -50,6 +50,31 @@ class StandupDraft(BaseModel):
     cited_event_ids: list[str] = Field(default_factory=list)
 
 
+def reports_closed_as_done(events: list[Event]) -> set[str]:
+    """Reports that `report --close-item` turned into a done closure.
+
+    That tool call writes the report and then the closure, naming the report as its one parent,
+    so the closure already says the same thing under Done/Shipped. Only that exact pair matches:
+    one parent, the same author, the same item. Callers can publish closures with provenance of
+    their choosing, so the author check keeps anyone from hiding a teammate's report, and the
+    item check keeps a closure from hiding a report about something else.
+    """
+    reports = {
+        e.id: (e.actor.user_id, e.payload.item_id)
+        for e in events
+        if isinstance(e.payload, ReportPosted) and e.payload.item_id
+    }
+    out = set()
+    for e in events:
+        p = e.payload
+        if not (isinstance(p, ActionItemClosed) and p.resolution == "done"):
+            continue
+        parents = e.provenance.parent_event_ids
+        if len(parents) == 1 and reports.get(parents[0]) == (e.actor.user_id, p.item_id):
+            out.add(parents[0])
+    return out
+
+
 async def gather(
     session: AsyncSession, user_id: str, *, hours: int = 24, now: datetime | None = None
 ) -> StandupDraft:
@@ -59,11 +84,14 @@ async def gather(
         since=now - timedelta(hours=hours), user_id=user_id, limit=1000
     )
     draft = StandupDraft(user_id=user_id)
+    closed_reports = reports_closed_as_done(events)
     for e in events:
         p = e.payload
         if isinstance(p, ActionItemClosed) and p.resolution == "done":
             draft.done.append(f"{p.note or 'closed ' + p.item_id} [{e.id}]")
         elif isinstance(p, ReportPosted):
+            if e.id in closed_reports:
+                continue
             draft.doing.append(f"{p.text} [{e.id}]")
         elif isinstance(p, ActionItemUpdated) and p.status == "blocked":
             draft.blocked.append(f"{p.note or p.item_id} [{e.id}]")
@@ -232,6 +260,9 @@ async def post_approved_draft(
     draft = StandupDraft.model_validate(
         approval.details.get("draft") or {"user_id": approval.requested_of}
     )
+    if draft.user_id != approval.requested_of:
+        # The approver may post only their own standup, never one that names someone else.
+        return None
     user = await session.get(UserRow, draft.user_id)
     if user is None:
         return None
@@ -253,13 +284,44 @@ async def _approve_and_post(
     draft: StandupDraft,
     user: UserRow,
     approval_id: str | None,
-) -> Event:
+) -> Event | str:
+    """Post the draft on the owner's click, or say why not: only the click that resolves the
+    approval posts, so a double click, a Slack retry, or an earlier CLI approval cannot post twice,
+    and a draft past its expiry is not posted at all."""
     if approval_id:
-        with contextlib.suppress(KeyError):  # the row may have expired; the click still counts
-            await approvals.resolve(
+        try:
+            row, won = await approvals.resolve_once(
                 session, approval_id=approval_id, decision="approved", resolved_by=user.id
             )
+        except KeyError:
+            pass  # no approval row behind this draft: the owner's click is the approval
+        else:
+            if not won:
+                return row.status
     return await _post(services, session, draft, user, mode="draft", actor=Actor.human(user.id))
+
+
+NOT_POSTED = {
+    "approved": (":white_check_mark:", "This standup was already posted."),
+    "expired": (
+        ":hourglass:",
+        "This draft expired, so it was not posted. Run `relay standup submit` for a fresh one.",
+    ),
+    "denied": (":no_entry:", "This draft was declined, so it was not posted."),
+}
+
+
+def _posted_blocks(ev: Event | str, *, edited: bool = False) -> tuple[str, list[dict[str, Any]]]:
+    if isinstance(ev, str):
+        emoji, text = NOT_POSTED.get(ev, (":warning:", f"This draft is {ev}; nothing was posted."))
+        return text, [{"type": "section", "text": {"type": "mrkdwn", "text": f"{emoji} {text}"}}]
+    label = "Standup posted (edited)." if edited else "Standup posted."
+    return f"Standup posted ({ev.id}).", [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f":white_check_mark: {label} `{ev.id}`"},
+        }
+    ]
 
 
 async def post_standup_from_draft(services: Services, body: dict[str, Any], client: Any) -> None:
@@ -275,16 +337,9 @@ async def post_standup_from_draft(services: Services, body: dict[str, Any], clie
             return
         ev = await _approve_and_post(services, session, draft, user, approval_id)
         await session.commit()
+    text, blocks = _posted_blocks(ev)
     await client.chat_update(
-        channel=body["channel"]["id"],
-        ts=body["message"]["ts"],
-        text=f"Standup posted ({ev.id}).",
-        blocks=[
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": f":white_check_mark: Standup posted. `{ev.id}`"},
-            }
-        ],
+        channel=body["channel"]["id"], ts=body["message"]["ts"], text=text, blocks=blocks
     )
 
 
@@ -351,18 +406,6 @@ async def post_standup_from_modal(services: Services, body: dict[str, Any], clie
             return
         ev = await _approve_and_post(services, session, draft, user, meta.get("approval_id"))
         await session.commit()
+    text, blocks = _posted_blocks(ev, edited=True)
     with contextlib.suppress(Exception):
-        await client.chat_update(
-            channel=meta["channel"],
-            ts=meta["ts"],
-            text=f"Standup posted ({ev.id}).",
-            blocks=[
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f":white_check_mark: Standup posted (edited). `{ev.id}`",
-                    },
-                }
-            ],
-        )
+        await client.chat_update(channel=meta["channel"], ts=meta["ts"], text=text, blocks=blocks)

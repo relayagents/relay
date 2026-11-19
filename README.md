@@ -21,6 +21,33 @@ relay my-items                    # ...and `relay recall "embedding cache"`, `re
 
 No Docker on hand? `RELAY_DATABASE_URL=sqlite+aiosqlite:///relay.db RELAY_ENVIRONMENT=test uv run relay serve` runs the API alone for a look around, and `uv run pytest -q` runs the whole suite on SQLite.
 
+### Run it on your machine
+
+The same steps work on a laptop with Docker. The first build needs about 25 GB free: the images take about 10 GB (the transcription image is most of it) and Docker's build cache the rest.
+
+- In `.env`, set `RELAY_HOSTNAME=localhost` and `RELAY_PUBLIC_URL=https://localhost`. Slack, Google, and the model keys can stay blank: extraction uses the `keyword` model, embeddings turn off, and recordings are transcribed without speaker labels unless `HF_TOKEN` is set.
+- Caddy serves `localhost` from its own certificate authority, which your machine does not trust yet. Copy its root certificate out and point the CLI at it before `relay login`:
+
+  ```bash
+  mkdir -p ~/.config/relay
+  docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ~/.config/relay/localhost-ca.crt
+  export SSL_CERT_FILE=~/.config/relay/localhost-ca.crt   # replaces the trust store in this shell only
+  ```
+
+  Node-based agents such as Claude Code read `NODE_EXTRA_CA_CERTS` instead.
+- `docker compose down` stops the node; `docker compose down -v` also deletes its data.
+
+### Connect Slack
+
+One Slack app per workspace, over Socket Mode, so the node needs no public URL (ADR-0007). It works on Slack's free plan.
+
+1. At [api.slack.com/apps](https://api.slack.com/apps), choose **Create New App → From a manifest**, pick the workspace, and paste [`deploy/slack/manifest.json`](deploy/slack/manifest.json).
+2. **Basic Information → App-Level Tokens → Generate Token and Scopes**, scope `connections:write`. That `xapp-...` value is `SLACK_APP_TOKEN`.
+3. **Install App** (or **OAuth & Permissions**) → **Install to Workspace**. The **Bot User OAuth Token** (`xoxb-...`) is `SLACK_BOT_TOKEN`.
+4. In Slack, invite the bot to the team channel (`/invite @Relay`), then open the channel's details: the **Channel ID** (`C...`) at the bottom is `SLACK_TEAM_CHANNEL`.
+5. Put the three in `.env` and run `docker compose up -d`. `relay-api` logs `slack.socket_mode.connected`.
+6. Each person links their Slack account, so approvals and DMs reach them: in Slack, **Profile → ⋮ → Copy member ID**, then `relay me --slack-user-id U...` (or `--slack-user-id` on `scripts/add-user.sh`).
+
 ## How it fits together
 
 ```mermaid

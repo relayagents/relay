@@ -210,10 +210,10 @@ async def test_cli_approval_of_a_standup_draft_posts_it(
         headers=auth(human),
     )
     assert r.status_code == 200 and r.json()["posted_event_id"].startswith("evt_")
-    assert (
-        services.chat.posts[-1]["channel"] == "C_TEAM"
-        and "cache landed" in services.chat.posts[-1]["text"]
-    )
+    standup, retired = services.chat.posts[-2:]
+    assert standup["channel"] == "C_TEAM" and "cache landed" in standup["text"]
+    # The draft DM is replaced, so it cannot be posted a second time from Slack.
+    assert retired["update"] and retired["text"].startswith(":white_check_mark: Approved")
     evs = (
         await client.get("/v1/events", params={"type": ["standup.posted"]}, headers=auth(human))
     ).json()
@@ -289,3 +289,29 @@ async def test_embed_backlog_sweeps_unembedded_events(services) -> None:  # type
     services.embedder = Dim()
     assert await embed_backlog({"services": services}) == 3
     assert await embed_backlog({"services": services}) == 0  # nothing left
+
+
+@pytest.mark.parametrize("close", [False, True])
+async def test_report_on_an_unknown_item_is_rejected_before_anything_is_logged(
+    client: httpx.AsyncClient, services, team, close: bool
+) -> None:  # type: ignore[no-untyped-def]
+    # First compose boot: `relay report --item-id item_nope` succeeded, and with --close-item it
+    # appended action_item.closed for an item that never existed, which the log cannot take back.
+    from sqlalchemy import func, select
+
+    from relayagents.core.models import EventRow
+
+    async def count() -> int:
+        async with services.db.session() as session:
+            # tool.called / tool.result audit the refused call, as they should; count the rest.
+            q = select(func.count()).select_from(EventRow).where(~EventRow.type.like("tool.%"))
+            return int(await session.scalar(q) or 0)
+
+    before = await count()
+    r = await client.post(
+        f"{TOOLS_PREFIX}/report",
+        json={"text": "done", "item_id": "item_nope", "close_item": close},
+        headers=auth(team["ada"]["agent"]),
+    )
+    assert r.status_code == 400 and "item_nope" in r.json()["detail"]
+    assert await count() == before

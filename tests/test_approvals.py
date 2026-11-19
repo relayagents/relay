@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
+from relayagents.api.slack.app import _resolve_from_slack
+from relayagents.core.models import ApprovalRow
 from relayagents.core.permissions import DEFAULT_POLICY, policy_for
 from relayagents.tools.rest import TOOLS_PREFIX
 from tests.conftest import auth
@@ -128,3 +131,163 @@ async def test_post_as_agent_is_attributed_and_audited(
         )
     ).json()
     assert evs[-2]["payload"]["target"] == "slack:C_TEAM" and evs[-1]["payload"]["ok"] is True
+
+
+class _SlackClient:
+    """Records the two Slack calls the approval handler makes."""
+
+    def __init__(self) -> None:
+        self.updates: list[dict] = []
+        self.ephemerals: list[dict] = []
+
+    async def chat_update(self, **kw) -> None:  # type: ignore[no-untyped-def]
+        self.updates.append(kw)
+
+    async def chat_postEphemeral(self, **kw) -> None:  # type: ignore[no-untyped-def]  # noqa: N802 (Slack's name)
+        self.ephemerals.append(kw)
+
+
+async def _open(client: httpx.AsyncClient, token: str, **kw) -> dict:  # type: ignore[no-untyped-def]
+    r = await client.post(
+        f"{TOOLS_PREFIX}/request_approval",
+        json={"action": "open an issue", "action_type": "github.issue.create", "wait": False, **kw},
+        headers=auth(token),
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+async def _expire(services, approval_id: str) -> None:  # type: ignore[no-untyped-def]
+    async with services.db.session() as session:
+        row = await session.get(ApprovalRow, approval_id)
+        row.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        await session.commit()
+
+
+def _click(approval_id: str, slack_user: str) -> dict:
+    return {
+        "actions": [{"value": approval_id}],
+        "user": {"id": slack_user},
+        "channel": {"id": "DGRACE"},
+        "message": {"ts": "1.000"},
+    }
+
+
+async def test_a_late_answer_does_not_count(client: httpx.AsyncClient, team, services) -> None:  # type: ignore[no-untyped-def]
+    # Nobody waited (wait=False), so expiry was never written; the deadline still holds.
+    ap = await _open(client, team["grace"]["agent"])
+    await _expire(services, ap["approval_id"])
+    r = await client.post(
+        f"/v1/approvals/{ap['approval_id']}/resolve",
+        json={"decision": "approved"},
+        headers=auth(team["grace"]["human"]),
+    )
+    assert r.status_code == 200 and r.json()["status"] == "expired"
+    assert r.json()["resolved_by"] is None
+    evs = (
+        await client.get(
+            "/v1/events", params={"thread": ap["approval_id"]}, headers=auth(team["grace"]["human"])
+        )
+    ).json()
+    assert evs[-1]["payload"]["decision"] == "expired"
+    assert evs[-1]["actor"] == {"kind": "system", "id": "relay.approvals"}
+    # The DM's buttons are replaced, so the Slack message says what happened.
+    update = services.chat.posts[-1]
+    assert update["update"] and update["text"].startswith(":hourglass: Expired")
+
+
+async def test_slack_shows_the_recorded_outcome_not_the_button(
+    client: httpx.AsyncClient, team, services
+) -> None:  # type: ignore[no-untyped-def]
+    ap = await _open(client, team["grace"]["agent"])
+    await _expire(services, ap["approval_id"])
+    slack = _SlackClient()
+    await _resolve_from_slack(services, _click(ap["approval_id"], "UGRACE"), slack, "approved")
+    assert "Approved" not in slack.updates[-1]["text"]
+    assert slack.updates[-1]["text"].startswith(":hourglass: Expired")
+    assert "already expired" in slack.ephemerals[-1]["text"]
+
+    # A second click on a settled approval cannot flip what the message says either.
+    ap = await _open(client, team["grace"]["agent"])
+    slack = _SlackClient()
+    await _resolve_from_slack(services, _click(ap["approval_id"], "UGRACE"), slack, "denied")
+    await _resolve_from_slack(services, _click(ap["approval_id"], "UGRACE"), slack, "approved")
+    assert [u["text"].split(" by ")[0] for u in slack.updates] == [":no_entry: Denied"] * 2
+    assert "already denied" in slack.ephemerals[-1]["text"]
+    assert len(slack.ephemerals) == 1
+
+
+async def test_an_approval_that_times_out_retires_its_buttons(
+    client: httpx.AsyncClient, team, services
+) -> None:  # type: ignore[no-untyped-def]
+    r = await client.post(
+        f"{TOOLS_PREFIX}/request_approval",
+        json={"action": "open an issue", "action_type": "github.issue.create", "timeout_s": 1},
+        headers=auth(team["linus"]["agent"]),
+    )
+    assert r.json()["status"] == "expired"
+    update = services.chat.posts[-1]
+    assert update["update"] and update["text"].startswith(":hourglass: Expired")
+
+
+async def test_approve_and_deny_at_once_record_one_decision(
+    client: httpx.AsyncClient, team, services
+) -> None:  # type: ignore[no-untyped-def]
+    from relayagents.core.store import EventStore
+
+    ap = await _open(client, team["grace"]["agent"])
+    slack = _SlackClient()
+    click = _click(ap["approval_id"], "UGRACE")
+    await asyncio.gather(
+        _resolve_from_slack(services, click, slack, "approved"),
+        _resolve_from_slack(services, click, slack, "denied"),
+    )
+    async with services.db.session() as session:
+        resolved = await EventStore(session).query(types=["approval.resolved"])
+        row = await session.get(ApprovalRow, ap["approval_id"])
+    assert len(resolved) == 1
+    assert row is not None and row.status == resolved[0].payload.decision  # type: ignore[attr-defined]
+    assert len(slack.ephemerals) == 1 and "Nothing was done" in slack.ephemerals[0]["text"]
+
+
+async def test_an_agent_cannot_post_someone_elses_standup_through_an_approval(
+    client: httpx.AsyncClient, team, services
+) -> None:  # type: ignore[no-untyped-def]
+    # Security review: grace's agent opens a standup-typed approval whose stored draft is ada's.
+    # If grace approves it, Relay must not post a standup as ada.
+    from relayagents.core import approvals
+    from relayagents.core.events import Actor
+    from relayagents.core.store import EventStore
+
+    forged = {"draft": {"user_id": "ada", "done": ["deleted the prod database"]}}
+    r = await client.post(
+        f"{TOOLS_PREFIX}/request_approval",
+        json={
+            "action": "post standup",
+            "action_type": "standup.post.draft",
+            "details": forged,
+            "wait": False,
+        },
+        headers=auth(team["grace"]["agent"]),
+    )
+    assert r.status_code >= 400 and "standup" in r.text
+
+    # Even an approval row that somehow carries another person's draft posts nothing.
+    async with services.db.session() as session:
+        row = await approvals.request(
+            session,
+            requester=Actor.agent("grace.claude-code"),
+            requested_of="grace",
+            action="post standup",
+            action_type="standup.post.draft",
+            details=forged,
+        )
+        await session.commit()
+    r = await client.post(
+        f"/v1/approvals/{row.id}/resolve",
+        json={"decision": "approved"},
+        headers=auth(team["grace"]["human"]),
+    )
+    assert r.status_code == 200 and "posted_event_id" not in r.json()
+    async with services.db.session() as session:
+        assert await EventStore(session).query(types=["standup.posted"]) == []

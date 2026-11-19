@@ -50,8 +50,10 @@ Update this file when you finish or reprioritize something; it is the handoff be
 
 - `ask.thread_id` is caller-chosen (#31); `report --close-item` can close a teammate's item
   (attributed) (#32).
-- The compose stack has never been run end to end; CI validates `docker compose config` and builds
-  only the `relay` image. The ingest, Hermes, and sandbox images have never been built (#33).
+- The compose stack has run end to end only once, on a laptop (November 2026: localhost, CPU
+  ingest, no Slack or model keys): bootstrap, login, a transcript upload, and a recording through
+  WhisperX into events. CI validates `docker compose config` and builds only the `relay` image; the
+  Hermes and sandbox images have never been built (#33).
 - Hermes and the sandbox's npm CLIs are unpinned until we have versions we tested (#24, #26).
 
 ## Parked

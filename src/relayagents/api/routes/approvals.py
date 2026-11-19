@@ -64,7 +64,7 @@ async def resolve_approval(
         raise HTTPException(400, "decision must be approved or denied")
     async with services.db.session() as session:
         try:
-            row = await approvals.resolve(
+            row, won = await approvals.resolve_once(
                 session,
                 approval_id=approval_id,
                 decision=body.decision,
@@ -77,11 +77,13 @@ async def resolve_approval(
         except PermissionError as exc:
             raise HTTPException(403, str(exc)) from exc
         posted = None
-        if row.status == "approved" and row.action_type == "standup.post.draft":
+        # only the call that resolved it posts: a repeated approve is a no-op, not a second post
+        if won and row.status == "approved" and row.action_type == "standup.post.draft":
             from relayagents.workers.standup import post_approved_draft
 
             posted = await post_approved_draft(services, session, row)
         await session.commit()
+        await approvals.update_chat(services.chat, row)  # retire the Slack buttons
         out = _out(row)
         if posted is not None:
             out["posted_event_id"] = posted.id
