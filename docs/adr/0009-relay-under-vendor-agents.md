@@ -1,6 +1,6 @@
 # ADR-0009: Relay sits under the vendor agents, not beside them
 
-**Status:** accepted · 2026-09-08
+**Status:** accepted · 2026-09-08 · amended by [ADR-0011](0011-session-agents-and-pr-watcher.md): no per-user Hermes agent; the reference path is the laptop coding agent
 
 ## Context
 
@@ -39,9 +39,10 @@ chat; and any of it on a free or Pro Slack plan.
    For the lab this means Claude Tag and Claude Code in Slack on the Claude Team plan it already
    has; Claude Team supports custom connectors (remote MCP), which is how Relay's server is added
    (to verify at first boot). Relay's own per-user agent (Hermes) and sandbox remain the reference
-   path for people without a vendor seat or using open models. *(Superseded by
-   [ADR-0011](0011-session-agents-and-pr-watcher.md): there is no per-user Relay agent; the laptop
-   coding agent is the reference path.)* The A2A broker stays for agents
+   path for people without a vendor seat or using open models. *(Amended by
+   [ADR-0011](0011-session-agents-and-pr-watcher.md): Relay no longer runs a per-user agent. The
+   reference path for those people is their laptop coding agent, connected per project
+   (ADR-0010), and the sandbox is unused.)* The A2A broker stays for agents
    that can be addressed directly; Slack threads are the transport for vendor agents.
 3. **Vendor meeting notes are an ingest source.** Slackbot recaps, Gemini Meet notes, and Zoom
    summaries enter the same extraction path as a transcript. WhisperX stays for recordings that

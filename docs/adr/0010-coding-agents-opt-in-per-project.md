@@ -1,6 +1,6 @@
 # ADR-0010: Coding agents get Relay per project, through one skill shipped from this repo
 
-**Status:** accepted · 2026-10-08
+**Status:** accepted · 2026-10-08 · amended by [ADR-0011](0011-session-agents-and-pr-watcher.md): the Hermes container is retired
 
 ## Context
 
@@ -53,6 +53,8 @@ nothing regressed.
      file outside the project is shared by every project that reads it, so it is labelled by
      that file rather than the project, and the next setup that writes there revokes it.
    - Hermes is unchanged: it runs in the team's container, where Relay is always on.
+     *(Amended by [ADR-0011](0011-session-agents-and-pr-watcher.md): the per-user Hermes
+     container is retired, so there is no Hermes path to set up.)*
 
    Each run mints one agent token labelled for this agent, project, and machine, and revokes the
    one it replaces, so the same agent in another project keeps working. A preview (no `--write`)

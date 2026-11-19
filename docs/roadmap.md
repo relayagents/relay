@@ -16,10 +16,12 @@ Update this file when you finish or reprioritize something; it is the handoff be
 
 ## Next, in order
 
-1. **Pull-request watcher** (ADR-0011, decision 4). Workers poll the lab's repositories with a
-   read-only token, record `pr.*` events with the mapped person as actor, and post one quiet root
-   message per PR to the team channel with threaded follow-ups that tag reviewers and authors.
-   Merged PRs feed standups and the digest. Polling only; a webhook accelerator needs a public URL.
+1. **Pull-request watcher** (ADR-0011, decision 5). Workers poll the team's repositories with a
+   read-only token, one poll per repository at a time, and record `pr.opened`, `pr.merged`, and
+   `pr.closed` with the PR's author as actor, starting from current state with no backfill. The
+   same PR adds a `pr.*` branch to the standup `gather()` (merged under Done, opened under Doing)
+   and counts merges in the digest. Nothing is posted to Slack. Polling only; a webhook
+   accelerator needs a public URL.
 2. **Cheaper or local models for the non-coding work** (#25). Extraction and embeddings do not need
    a frontier model; standups and digests make no model calls. Both already accept an
    OpenAI-compatible endpoint via `OPENAI_BASE_URL` (vLLM, Ollama) or a cheap API tier. The one
