@@ -264,6 +264,11 @@ async def request_approval(ctx: ToolContext, inp: RequestApprovalInput) -> Reque
         raise ToolError(
             f"action type {inp.action_type!r} is forbidden by policy; see docs/permissions.md"
         )
+    if inp.action_type.startswith("standup."):
+        # Approving one of these posts a standup, so only the standup path may open them.
+        raise ToolError(
+            f"action type {inp.action_type!r} is reserved; submit a standup with `relay standup submit`"
+        )
     async with ctx.db.session() as session:
         row = await approvals.request(
             session,
