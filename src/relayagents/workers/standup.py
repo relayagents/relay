@@ -302,7 +302,7 @@ NOT_POSTED = {
     "approved": (":white_check_mark:", "This standup was already posted."),
     "expired": (
         ":hourglass:",
-        "This draft expired. The next one arrives at your standup time, or run `relay standup draft`.",
+        "This draft expired, so it was not posted. Run `relay standup submit` for a fresh one.",
     ),
     "denied": (":no_entry:", "This draft was declined, so it was not posted."),
 }
