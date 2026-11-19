@@ -1,6 +1,6 @@
 # ADR-0011: Toward one hub with on-demand subagents: first, routing to humans and a pull-request watcher
 
-**Status:** accepted · 2026-10-22 · supersedes [ADR-0004](0004-hermes-reference-agent.md) · amends [ADR-0002](0002-substrate-not-framework.md)
+**Status:** accepted · 2026-10-22 · supersedes [ADR-0004](0004-hermes-reference-agent.md) · amends [ADR-0002](0002-substrate-not-framework.md), [ADR-0009](0009-relay-under-vendor-agents.md), [ADR-0010](0010-coding-agents-opt-in-per-project.md)
 
 **Implementation:** this ADR records the decision; the code follows in two PRs. Decisions 2 to 4
 (retire Hermes, route to humans, add-user) land first; decision 5 (the watcher) second. Until the
@@ -85,31 +85,45 @@ Four constraints shape the step.
      time, and one reference implementation on the GitHub REST API over `httpx`. The existing `gh`
      connector stays for writes under a user's token.
    - Workers poll each watched repository every few minutes. Pull requests are diffed against the
-     `pull_requests` projection, and only state changes become events, so restarts and overlapping
-     runs are idempotent. On first sight of a repository, already-open PRs get a backfilled
-     `pr.opened`.
-   - Five event types, all with `source="github"`: `pr.opened`, `pr.review_requested`,
-     `pr.reviewed`, `pr.merged`, `pr.closed`. The **actor is the mapped Relay user** when the
-     GitHub login is bound to one (`users.github_login`); `source` records that Relay observed the
-     act on GitHub rather than the person acting in Relay. Unmapped logins fall back to the system
-     actor `relay.github` with the login in the payload. Mapped actors are what make PRs appear in
-     `events --actor` and in the person's standup draft with no further work, and in the digest's
-     shipped section once the digest counts `pr.merged`. Draft PRs are ignored until they are
-     marked ready for review, which is when `pr.opened` is recorded. Bot authors are skipped. A PR
-     whose body or branch names a Relay item is linked to it (`item_id`); nothing closes an item
-     automatically.
+     `pull_requests` projection, and only state changes become events. Polls of one repository
+     run one at a time (one arq job id per repository), and each event commits in the same
+     transaction as its projection update. Without both, two polls could read the same old
+     projection and record the same change twice.
+   - **No backfill; the watcher starts from current state.** The first poll of a repository
+     records when watching began and emits nothing. After that, a change becomes an event only if
+     it happened after that time by GitHub's own timestamps (`created_at`, `merged_at`,
+     `closed_at`; for a former draft, the poll that first sees it ready). So PRs that are months
+     old never show up in today's standups or digests, and a PR that was open before watching
+     began gets only its `pr.merged` or `pr.closed`. The start time is the poller's own cursor,
+     like a sync position, not team memory; `relay replay` rebuilds the `pull_requests` projection
+     from the events and leaves the cursor alone.
+   - Three event types, all with `source="github"`: `pr.opened`, `pr.merged`, `pr.closed`
+     (closed without merging). The **actor is the PR's author, as the mapped Relay user**, when
+     the GitHub login is bound to one (`users.github_login`), so each event lands in the author's
+     record. Whoever merged or closed it is in the payload. `source` records that Relay observed
+     the act on GitHub rather than the person acting in Relay. Unmapped logins fall back to the
+     system actor `relay.github` with the login in the payload. Draft PRs are ignored until they
+     are marked ready for review, which is when `pr.opened` is recorded. Bot authors are skipped.
+   - **Standups and digests need code, not just events.** The standup `gather()` reads only item
+     closures, reports, and blocked updates and skips every other event, so the watcher PR also
+     adds a `pr.*` branch there: `pr.merged` goes under Done, `pr.opened` under Doing, and
+     `pr.closed` is left out because nothing shipped. The digest's shipped section counts
+     `pr.merged` in the same PR.
    - Configuration: a list of repositories, a poll interval, and a **read-only GitHub token given
-     to `relay-workers` only**. This amends ADR-0002, under which the only credential Relay holds
-     is the team model key in the workers and its PM has none of its own. The watcher adds a second
-     team-level credential: a read-only one, for observing, never for writing. Writes to GitHub
-     remain per user, under that user's own token, in their own agent.
+     to `relay-workers` only**. This amends ADR-0002, under which Relay sees only what agents
+     publish as events. The watcher observes GitHub directly, so PR activity enters the log even
+     when nobody's agent reports it. The token can read, never write; writes to GitHub remain per
+     user, under that user's own token, in their own agent. ADR-0002's limit on model keys is
+     unchanged.
 
 ## Open questions
 
 - **How a subagent reaches a cluster behind interactive 2FA** (constraint 3). One candidate is a
   per-person resident Slurm job the person starts after one login, which polls Relay outbound and
   posts run-status events (option F in #40), running only experiments the person declared and using
-  a model only to summarize results. Another is a machine the team owns on the tailnet, where a
+  a model only to summarize results. That job would be a transport, not a subagent: it stays up so
+  it can launch short-lived subagents on the cluster, and each subagent still exits when its task
+  is done. Another is a machine the team owns on the tailnet, where a
   team token would be acceptable. The launcher ADR picks one or rules both out.
 - **How a running agent hears about new work** (constraint 2). Considered: a "since your last call"
   block on every tool response (works for every MCP client, but only when the agent calls a Relay
@@ -127,6 +141,13 @@ Four constraints shape the step.
   that one repository; the poller stays the source of truth and the webhook body is never trusted
   as data. It needs a public URL (Tailscale Funnel, a tunnel, or a VPS), so it waits until someone
   needs instant delivery.
+- **Review events (`pr.review_requested`, `pr.reviewed`).** A poll sees only snapshots. It misses
+  a review request that is added and removed between polls, and without review ids it cannot tell
+  repeated reviews apart. Add them by reading GitHub's review and timeline endpoints, which have
+  ids, once someone needs them.
+- **Linking PRs to Relay items.** Matching an item id in a PR's body or branch name is guesswork
+  that needs its own rules for false matches. Until then, the author can link the PR in a
+  `report`. Nothing closes an item automatically either way.
 - **The sandbox image.** With no Hermes, nothing starts `relay-sandbox`. It is left in place and
   marked unused; whether G's subagents reuse it is for the launcher ADR.
 - **Per-repository channels** follow the team concept (#27).
@@ -156,4 +177,6 @@ Four constraints shape the step.
 - The cluster allows a resident per-user job, or the team gets its own compute on the tailnet.
 - Someone asks for PR messages in Slack from Relay rather than from GitHub's app, or needs PR
   events faster than the poll interval (then a public URL and the webhook nudge).
+- Standups or digests need review activity, or teams keep linking PRs to items by hand (then add
+  the deferred review events or item linking).
 - The team concept lands (#27).
