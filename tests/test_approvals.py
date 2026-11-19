@@ -248,3 +248,46 @@ async def test_approve_and_deny_at_once_record_one_decision(
     assert len(resolved) == 1
     assert row is not None and row.status == resolved[0].payload.decision  # type: ignore[attr-defined]
     assert len(slack.ephemerals) == 1 and "Nothing was done" in slack.ephemerals[0]["text"]
+
+
+async def test_an_agent_cannot_post_someone_elses_standup_through_an_approval(
+    client: httpx.AsyncClient, team, services
+) -> None:  # type: ignore[no-untyped-def]
+    # Security review: grace's agent opens a standup-typed approval whose stored draft is ada's.
+    # If grace approves it, Relay must not post a standup as ada.
+    from relayagents.core import approvals
+    from relayagents.core.events import Actor
+    from relayagents.core.store import EventStore
+
+    forged = {"draft": {"user_id": "ada", "done": ["deleted the prod database"]}}
+    r = await client.post(
+        f"{TOOLS_PREFIX}/request_approval",
+        json={
+            "action": "post standup",
+            "action_type": "standup.post.draft",
+            "details": forged,
+            "wait": False,
+        },
+        headers=auth(team["grace"]["agent"]),
+    )
+    assert r.status_code >= 400 and "standup" in r.text
+
+    # Even an approval row that somehow carries another person's draft posts nothing.
+    async with services.db.session() as session:
+        row = await approvals.request(
+            session,
+            requester=Actor.agent("grace.claude-code"),
+            requested_of="grace",
+            action="post standup",
+            action_type="standup.post.draft",
+            details=forged,
+        )
+        await session.commit()
+    r = await client.post(
+        f"/v1/approvals/{row.id}/resolve",
+        json={"decision": "approved"},
+        headers=auth(team["grace"]["human"]),
+    )
+    assert r.status_code == 200 and "posted_event_id" not in r.json()
+    async with services.db.session() as session:
+        assert await EventStore(session).query(types=["standup.posted"]) == []
