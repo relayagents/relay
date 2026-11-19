@@ -3,9 +3,9 @@
 # code. PRs from forks are skipped so they cannot reach the key. Re-run a review by applying the
 # `outerloop:review` label; silence one PR with `outerloop:no-review`. Docs: outerloop/docs/reviewer.md.
 #
-# Backend: hermes on the OpenAI provider with gpt-6.1-terra (provider-native id, no `openai/` prefix).
-# gpt-6.1-terra replaced gpt-5.6-terra: about half the price per token and stronger on OpenAI's
-# agent benchmarks. This file is the only place the model is named; docs refer to "outerloop".
+# Backend: codex with no `model`, so the review runs on the model outerloop pins next to its Codex
+# CLI version (`model` under `[codex]` in outerloop's src/outerloop/harnesses.toml). Model upgrades
+# arrive with outerloop releases and need no change here; no file in this repo names a model.
 # Needs the repository secret OPENAI_REVIEWER_KEY (a spend-capped key used only for reviews).
 # Without it every PR gets a visible "could not run" stub, by design.
 name: outerloop-review
@@ -24,13 +24,13 @@ jobs:
     if: >-
       !contains(github.event.pull_request.labels.*.name, 'outerloop:no-review')
       && (github.event.action != 'labeled' || github.event.label.name == 'outerloop:review')
-    # Pinned to a released tag; main moves. Bump deliberately.
-    uses: outerloop-science/outerloop/.github/workflows/advisory-review-agent.yml@v0.1.0.dev3
+    # Pinned to an exact outerloop commit; main moves. The default-to-pinned-model change is on main
+    # but not yet in a release (v0.6.0 lacks it). Once a release includes it, move `uses:` and
+    # `reviewer_ref` together to that tag. Keep both refs identical.
+    uses: outerloop-science/outerloop/.github/workflows/advisory-review-agent.yml@d93d415e7c1926a098a59b474a2f5384a3078e8b
     with:
       bot_login: relay-bot   # PRs by this login are never reviewed; we have no bot yet, so everything is reviewed
-      backend: hermes
-      hermes_provider: openai
-      model: gpt-6.1-terra
-      reviewer_ref: v0.1.0.dev3
+      backend: codex
+      reviewer_ref: d93d415e7c1926a098a59b474a2f5384a3078e8b
     secrets:
       openai_reviewer_key: ${{ secrets.OPENAI_REVIEWER_KEY }}
