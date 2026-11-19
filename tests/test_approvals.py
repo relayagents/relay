@@ -228,3 +228,23 @@ async def test_an_approval_that_times_out_retires_its_buttons(
     assert r.json()["status"] == "expired"
     update = services.chat.posts[-1]
     assert update["update"] and update["text"].startswith(":hourglass: Expired")
+
+
+async def test_approve_and_deny_at_once_record_one_decision(
+    client: httpx.AsyncClient, team, services
+) -> None:  # type: ignore[no-untyped-def]
+    from relayagents.core.store import EventStore
+
+    ap = await _open(client, team["grace"]["agent"])
+    slack = _SlackClient()
+    click = _click(ap["approval_id"], "UGRACE")
+    await asyncio.gather(
+        _resolve_from_slack(services, click, slack, "approved"),
+        _resolve_from_slack(services, click, slack, "denied"),
+    )
+    async with services.db.session() as session:
+        resolved = await EventStore(session).query(types=["approval.resolved"])
+        row = await session.get(ApprovalRow, ap["approval_id"])
+    assert len(resolved) == 1
+    assert row is not None and row.status == resolved[0].payload.decision  # type: ignore[attr-defined]
+    assert len(slack.ephemerals) == 1 and "Nothing was done" in slack.ephemerals[0]["text"]

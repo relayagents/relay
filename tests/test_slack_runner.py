@@ -16,6 +16,8 @@ from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
 from slack_sdk.web.async_slack_response import AsyncSlackResponse
 
+from relayagents.api.app import start_slack
+from relayagents.api.slack import app as slack_app
 from relayagents.api.slack.app import SlackRunner
 from relayagents.tools.context import Services
 
@@ -124,3 +126,35 @@ async def test_a_transient_slack_error_retries_instead_of_disabling_slack(
     await asyncio.wait_for(runner.start(), timeout=5)
     await asyncio.wait_for(connecting.wait(), timeout=5)
     await runner.stop()
+
+
+async def test_a_silent_network_does_not_stall_startup(
+    slack_services: Services, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Packets dropped: the call never answers. Startup must give up on the check quickly and
+    # keep connecting in the background, as for any unreachable Slack.
+    async def silent(*args: Any, **kwargs: Any) -> Any:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(slack_app, "START_CHECK_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(AsyncWebClient, "auth_test", silent)
+    connecting = asyncio.Event()
+
+    async def connect() -> None:
+        connecting.set()
+
+    runner = SlackRunner(slack_services)
+    monkeypatch.setattr(runner.handler, "connect_async", connect)
+    await asyncio.wait_for(runner.start(), timeout=2)
+    await asyncio.wait_for(connecting.wait(), timeout=2)
+    await runner.stop()
+
+
+async def test_a_failed_start_turns_off_buttons(
+    slack_services: Services, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # With no Socket Mode, nothing receives a click, so DMs must offer the CLI instead.
+    monkeypatch.setattr(AsyncWebClient, "auth_test", _invalid_auth)
+    assert slack_services.chat is not None and slack_services.chat.supports_actions
+    assert await start_slack(slack_services) is None
+    assert slack_services.chat.supports_actions is False

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from fastapi import FastAPI
@@ -25,6 +25,9 @@ from relayagents.tools.context import Services
 from relayagents.tools.handlers import ToolError
 from relayagents.tools.mcp import build_mcp_server
 from relayagents.tools.rest import build_router as build_tools_router
+
+if TYPE_CHECKING:
+    from relayagents.api.slack.app import SlackRunner
 
 log = structlog.get_logger()
 
@@ -65,6 +68,26 @@ def build_services(
     return services
 
 
+async def start_slack(services: Services) -> SlackRunner | None:
+    """Start Socket Mode, or run without it when Slack rejects the tokens.
+
+    Without Socket Mode nothing receives a button click, so approval and standup DMs must fall
+    back to CLI instructions; otherwise the requester waits out the whole TTL on a dead button.
+    """
+    from relayagents.api.slack.app import SlackRunner
+
+    slack = SlackRunner(services)
+    try:
+        await slack.start()
+    except Exception as exc:
+        log.warning("slack.start_failed", error=str(exc))
+        await slack.stop()  # the socket client already holds an HTTP session
+        if services.chat is not None:
+            services.chat.supports_actions = False
+        return None
+    return slack
+
+
 def create_app(settings: Settings | None = None, *, services: Services | None = None) -> FastAPI:
     settings = settings or get_settings()
     services = services or build_services(settings)
@@ -90,15 +113,7 @@ def create_app(settings: Settings | None = None, *, services: Services | None = 
             services.semantic = ArqSemanticSearch(redis)
         slack = None
         if settings.slack_socket_mode_enabled and settings.environment != "test":
-            from relayagents.api.slack.app import SlackRunner
-
-            slack = SlackRunner(services)
-            try:
-                await slack.start()
-            except Exception as exc:
-                log.warning("slack.start_failed", error=str(exc))
-                await slack.stop()  # the socket client already holds an HTTP session
-                slack = None
+            slack = await start_slack(services)
         async with mcp.session_manager.run():
             yield
         if slack is not None:

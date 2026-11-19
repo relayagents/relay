@@ -94,12 +94,12 @@ async def _resolve_from_slack(
                 text="Only the person this approval was requested of can resolve it.",
             )
             return
-        was = row.status
-        row = await approvals.resolve(
+        # Of two clicks at once (Approve then Deny, or a Slack retry) only one resolves it.
+        row, won = await approvals.resolve_once(
             session, approval_id=approval_id, decision=decision, resolved_by=user_id
         )
         await session.commit()
-    if was != "pending" or row.status != decision:
+    if not won:
         # The click changed nothing: say so, and show what was actually recorded below.
         with contextlib.suppress(Exception):
             await client.chat_postEphemeral(
@@ -163,6 +163,10 @@ TOKEN_REJECTED = frozenset(
 )
 
 
+# Seconds each startup token check may take before Slack counts as unreachable.
+START_CHECK_TIMEOUT_S = 5.0
+
+
 class SlackRunner:
     """Runs the Socket Mode connection inside the API process lifespan."""
 
@@ -183,8 +187,15 @@ class SlackRunner:
         """
         settings = self.services.settings
         try:
-            await AsyncWebClient(token=settings.slack_bot_token).auth_test()
-            await AsyncWebClient().apps_connections_open(app_token=settings.slack_app_token)
+            # Bounded: the SDK's own 30 s timeout per call, on a network that drops packets, kept
+            # /health silent for about a minute. A timeout counts as "Slack unreachable" below.
+            await asyncio.wait_for(
+                AsyncWebClient(token=settings.slack_bot_token).auth_test(), START_CHECK_TIMEOUT_S
+            )
+            await asyncio.wait_for(
+                AsyncWebClient().apps_connections_open(app_token=settings.slack_app_token),
+                START_CHECK_TIMEOUT_S,
+            )
         except SlackApiError as exc:
             if exc.response.get("error") in TOKEN_REJECTED:
                 raise
