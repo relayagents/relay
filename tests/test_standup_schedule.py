@@ -231,3 +231,53 @@ def test_the_timezone_list_is_read_once(monkeypatch) -> None:  # type: ignore[no
         assert users._known_timezone(tz) == tz
     assert len(calls) == 1
     users._iana_zones.cache_clear()
+
+
+async def test_overlapping_ticks_post_once(
+    services: Services, team, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    # The 09:00 tick is still waiting on Slack when the 09:01 tick starts (the workers run up to
+    # four jobs at once). Neither has committed, so both used to see "not yet posted" and post.
+    import asyncio
+
+    await _set(services, "linus", standup_mode="auto", standup_time="09:00")
+    await _set(services, "ada", standup_mode="off")
+    await _set(services, "grace", standup_mode="off")
+    chat = services.chat
+    assert chat is not None
+    post = chat.post
+    started = asyncio.Event()
+
+    async def slow_post(*args: Any, **kwargs: Any) -> Any:
+        started.set()
+        await asyncio.sleep(0.2)
+        return await post(*args, **kwargs)
+
+    monkeypatch.setattr(chat, "post", slow_post)
+    first = asyncio.create_task(run_due_standups(services, now=DAY.replace(hour=9)))
+    await started.wait()
+    second = await run_due_standups(services, now=DAY.replace(hour=9, minute=1))
+    assert sorted(await first + second) == ["linus"]
+    assert len([p for p in chat.posts if p["channel"] == "C_TEAM"]) == 1  # type: ignore[attr-defined]
+
+
+async def test_a_failed_delivery_releases_the_claim(
+    services: Services, team, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    # Slack is down at 09:00: nothing went out, so the 09:01 tick must try again rather than
+    # find the day already claimed.
+    await _set(services, "linus", standup_mode="auto", standup_time="09:00")
+    await _set(services, "ada", standup_mode="off")
+    await _set(services, "grace", standup_mode="off")
+    chat = services.chat
+    assert chat is not None
+    post = chat.post
+
+    async def down(*args: Any, **kwargs: Any) -> Any:
+        raise ConnectionError("slack is down")
+
+    monkeypatch.setattr(chat, "post", down)
+    assert await run_due_standups(services, now=DAY.replace(hour=9)) == []
+    monkeypatch.setattr(chat, "post", post)
+    assert await run_due_standups(services, now=DAY.replace(hour=9, minute=1)) == ["linus"]
+    assert len([p for p in chat.posts if p["channel"] == "C_TEAM"]) == 1  # type: ignore[attr-defined]

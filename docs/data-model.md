@@ -59,6 +59,7 @@ Adding a type: add the payload class and include it in `AnyPayload`, add a sampl
 | `agents` | operational | A2A AgentCard registry, optional `push_url` |
 | `a2a_tasks` | operational | store-and-forward inbox/outbox; messages are also events |
 | `approvals` | operational | pending/approved/denied/expired, Slack message ref for updates |
+| `standup_claims` | operational | one row per user per local day, inserted before a scheduled standup goes out so overlapping cron runs deliver it once |
 | `meetings` | operational | status machine `queued → transcribing → extracting → done | failed`, file paths |
 
 Migrations live in `src/relayagents/core/migrations` (Alembic, async). `relay migrate` applies them; the API container does so on start.
