@@ -53,6 +53,10 @@ Rules that keep an agent from escalating to its human:
 | `standup.post.draft` | auto | DMs a draft; posting still needs a click |
 | `standup.post.auto` | auto | only when the user chose mode `auto` |
 
+The `standup.*` keys are reserved for the standup path. `request_approval` refuses them, because
+approving a `standup.post.draft` approval posts the draft it carries, and Relay posts a draft only
+for the person who approved it.
+
 ### When the human asks in their own session
 
 The policy above gates writes that go through Relay. A coding agent on a laptop also writes with

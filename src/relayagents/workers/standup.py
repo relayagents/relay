@@ -260,6 +260,9 @@ async def post_approved_draft(
     draft = StandupDraft.model_validate(
         approval.details.get("draft") or {"user_id": approval.requested_of}
     )
+    if draft.user_id != approval.requested_of:
+        # The approver may post only their own standup, never one that names someone else.
+        return None
     user = await session.get(UserRow, draft.user_id)
     if user is None:
         return None
