@@ -25,12 +25,9 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-# pgvector on Postgres, JSON on SQLite (tests / tiny dev). 1536 = text-embedding-3-small.
-# Changing this needs a migration; the embedder validates vectors against it.
-EMBEDDING_DIM = 1536
-EmbeddingType = Vector(EMBEDDING_DIM).with_variant(
-    JSON(none_as_null=True), "sqlite"
-)  # real NULL on both
+# pgvector on Postgres, JSON on SQLite (tests / tiny dev). No width here: it is configuration
+# (RELAY_EMBEDDING_DIM), set on the live column by core/embedding_column.py (ADR-0012).
+EmbeddingType = Vector().with_variant(JSON(none_as_null=True), "sqlite")  # real NULL on both
 
 
 class TZDateTime(TypeDecorator[datetime]):

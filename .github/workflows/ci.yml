@@ -35,6 +35,8 @@ jobs:
       - run: uv sync --frozen
       - name: migrations apply on Postgres + pgvector
         run: RELAY_DATABASE_URL=postgresql+asyncpg://relay:relay@localhost:5432/relay uv run alembic upgrade head
+      - name: relay migrate resizes events.embedding (drops the schema; runs last)
+        run: RELAY_TEST_POSTGRES_URL=postgresql+asyncpg://relay:relay@localhost:5432/relay uv run pytest -q tests/test_embedding_column.py
 
   images:
     runs-on: ubuntu-latest
