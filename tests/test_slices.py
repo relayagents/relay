@@ -267,8 +267,10 @@ def test_digest_says_each_thing_once() -> None:
             user_id="grace",
             mode="auto",
             done=[f"cache shipped [{closed.id}]"],
-            doing=[f"eval doc started [{other.id}]", "reviewing #12 [evt_from_last_week]"],
-            cited_event_ids=[closed.id, other.id, "evt_from_last_week"],
+            # a cited id from outside the window: well-formed, so this tests the window,
+            # not the id format
+            doing=[f"eval doc started [{other.id}]", "reviewing #12 [evt_lastweek01]"],
+            cited_event_ids=[closed.id, other.id, "evt_lastweek01"],
         ),
         actor=agent,
         source="api",
@@ -280,7 +282,7 @@ def test_digest_says_each_thing_once() -> None:
     assert d.shipped == ["cache shipped (grace)"]
     assert d.in_progress == [
         "eval doc started (grace)",
-        "reviewing #12 [evt_from_last_week] (grace)",
+        "reviewing #12 [evt_lastweek01] (grace)",
     ]
 
 
