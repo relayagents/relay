@@ -10,11 +10,13 @@ name: relay-gpu
 services:
   relay-ingest:
     image: ${RELAY_INGEST_IMAGE:-ghcr.io/relayagents/relay-ingest:cuda}
+    # linux/amd64 only: the locked torchcodec has no Linux arm64 wheel (Apple Silicon emulates).
+    platform: linux/amd64
     build:
       context: .
       dockerfile: deploy/docker/ingest/Dockerfile
       args:
-        TORCH_INDEX: https://download.pytorch.org/whl/cu124
+        TORCH_VARIANT: cu128
     command: ["ingest"]
     environment:
       RELAY_DATABASE_URL: ${RELAY_DATABASE_URL:?set to the node's Postgres over Tailscale}

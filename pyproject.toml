@@ -40,6 +40,11 @@ dependencies = [
 [project.optional-dependencies]
 graph = ["graphiti-core[kuzu]>=0.30"]
 ingest = ["whisperx>=3.4"]
+# Which torch build `ingest` runs on. Pick one alongside `ingest` (`--extra ingest --extra cpu`);
+# they conflict, and each resolves torch from its own PyTorch index (see [tool.uv.sources]).
+# Pinned to the torch that torchcodec (0.7 pairs with torch 2.8) is built for; bump them together.
+cpu = ["torch==2.8.0", "torchaudio==2.8.0", "torchvision==0.23.0"]
+cu128 = ["torch==2.8.0", "torchaudio==2.8.0", "torchvision==0.23.0"]
 
 [project.scripts]
 relay = "relayagents.cli.main:main"
@@ -65,6 +70,34 @@ packages = ["src/relayagents"]
 
 [tool.uv]
 default-groups = ["dev"]
+conflicts = [[{ extra = "cpu" }, { extra = "cu128" }]]
+
+# The torch variants live in uv.lock, so the ingest image installs exactly what we lock
+# (`uv sync --locked --extra ingest --extra cpu`) instead of re-resolving at build time.
+# CUDA wheels exist for Linux and Windows only; elsewhere `cu128` falls back to PyPI.
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cpu", extra = "cpu" },
+  { index = "pytorch-cu128", extra = "cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchaudio = [
+  { index = "pytorch-cpu", extra = "cpu" },
+  { index = "pytorch-cu128", extra = "cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+  { index = "pytorch-cpu", extra = "cpu" },
+  { index = "pytorch-cu128", extra = "cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
 [tool.ruff]
 line-length = 100
