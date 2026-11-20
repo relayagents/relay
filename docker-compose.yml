@@ -116,11 +116,13 @@ services:
     # CPU fallback on the node. For a GPU box elsewhere on the tailnet, run docker-compose.gpu.yml there instead.
     # Gets only what transcription needs: no Slack tokens, no model keys.
     image: ${RELAY_INGEST_IMAGE:-ghcr.io/relayagents/relay-ingest:latest}
+    # linux/amd64 only: the locked torchcodec has no Linux arm64 wheel (Apple Silicon emulates).
+    platform: linux/amd64
     build:
       context: .
       dockerfile: deploy/docker/ingest/Dockerfile
       args:
-        TORCH_INDEX: https://download.pytorch.org/whl/cpu
+        TORCH_VARIANT: cpu
     command: ["ingest"]
     environment:
       RELAY_DATABASE_URL: postgresql+asyncpg://relay:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/relay

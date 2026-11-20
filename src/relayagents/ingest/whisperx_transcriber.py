@@ -1,7 +1,8 @@
 """``Transcriber`` on WhisperX (faster-whisper + wav2vec2 alignment) with pyannote diarization.
 
 Heavy imports are deferred so the rest of Relay never depends on torch. Install with
-``uv sync --extra ingest`` (or use the ``relay-ingest`` image).
+``uv sync --extra ingest --extra cpu`` (``--extra cu128`` on a CUDA box), or use the
+``relay-ingest`` image.
 """
 
 from __future__ import annotations
