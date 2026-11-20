@@ -51,7 +51,9 @@ Update this file when you finish or reprioritize something; it is the handoff be
 - `ask.thread_id` is caller-chosen (#31); `report --close-item` can close a teammate's item
   (attributed) (#32).
 - The compose stack has never been run end to end; CI validates `docker compose config` and builds
-  only the `relay` image. The ingest, Hermes, and sandbox images have never been built (#33).
+  the `relay` and CPU `relay-ingest` images (the latter checked against `uv.lock`, #38). The Hermes,
+  sandbox, and CUDA ingest images are built only at release (#33). `relay-ingest` is linux/amd64
+  only until torch moves past 2.8 (torchcodec 0.7 has no Linux arm64 wheel).
 - Hermes and the sandbox's npm CLIs are unpinned until we have versions we tested (#24, #26).
 
 ## Parked

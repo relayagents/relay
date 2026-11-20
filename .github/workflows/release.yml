@@ -15,6 +15,8 @@ jobs:
         include:
           - { name: relay, file: deploy/docker/relay/Dockerfile }
           - { name: relay-ingest, file: deploy/docker/ingest/Dockerfile }
+          # The GPU image docker-compose.gpu.yml pulls: relay-ingest:cuda and relay-ingest:<tag>-cuda.
+          - { name: relay-ingest, file: deploy/docker/ingest/Dockerfile, variant: cuda, build_args: TORCH_VARIANT=cu128 }
           - { name: relay-hermes, file: deploy/docker/hermes/Dockerfile }
           - { name: relay-sandbox, file: deploy/docker/sandbox/Dockerfile }
     steps:
@@ -30,6 +32,7 @@ jobs:
           context: .
           file: ${{ matrix.file }}
           push: true
+          build-args: ${{ matrix.build_args }}
           tags: |
-            ghcr.io/relayagents/${{ matrix.name }}:latest
-            ghcr.io/relayagents/${{ matrix.name }}:${{ github.ref_name }}
+            ghcr.io/relayagents/${{ matrix.name }}:${{ matrix.variant || 'latest' }}
+            ghcr.io/relayagents/${{ matrix.name }}:${{ github.ref_name }}${{ matrix.variant && format('-{0}', matrix.variant) || '' }}

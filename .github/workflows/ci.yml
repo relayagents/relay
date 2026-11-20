@@ -50,5 +50,23 @@ jobs:
           tags: ghcr.io/relayagents/relay:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: build relay-ingest image (cpu)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/ingest/Dockerfile
+          push: false
+          load: true
+          tags: ghcr.io/relayagents/relay-ingest:ci
+          cache-from: type=gha,scope=ingest
+          cache-to: type=gha,scope=ingest,mode=max
+      - name: relay-ingest matches uv.lock and imports
+        run: |
+          # Every locked dependency is installed at its locked version (relayagents itself is skipped:
+          # uv always reports a local project as stale without its build cache).
+          docker run --rm --entrypoint uv ghcr.io/relayagents/relay-ingest:ci \
+            sync --locked --no-dev --extra ingest --extra cpu --check --offline --inexact --no-install-project
+          docker run --rm --entrypoint python ghcr.io/relayagents/relay-ingest:ci -c \
+            "import torch, torchaudio, torchcodec, whisperx; print(torch.__version__, torchcodec.__version__)"
       - name: compose config is valid
         run: cp .env.example .env && docker compose config -q
