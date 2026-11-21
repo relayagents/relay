@@ -95,9 +95,10 @@ def make_command(spec: ToolSpec, client_factory: Any) -> Any:
                 else typer.Argument(default, help=help_text)
             )
         else:
-            p_default = typer.Option(
-                ... if required else default, f"--{name.replace('_', '-')}", help=help_text
-            )
+            flag = f"--{name.replace('_', '-')}"
+            if ctype is bool:  # a lone flag can only switch on; `wait` defaults to True
+                flag = f"{flag}/--no-{flag[2:]}"
+            p_default = typer.Option(... if required else default, flag, help=help_text)
         params.append(
             inspect.Parameter(
                 name, inspect.Parameter.KEYWORD_ONLY, default=p_default, annotation=ctype
