@@ -151,6 +151,22 @@ async def test_standup_only_counts_completed_items_as_done(
     assert draft["cited_event_ids"] == ([event_id] if resolution == "done" else [])
 
 
+async def test_standup_lists_a_report_that_closed_its_item_once(
+    client: httpx.AsyncClient, team
+) -> None:  # type: ignore[no-untyped-def]
+    headers = auth(team["grace"]["agent"])
+    response = await client.post(
+        f"{TOOLS_PREFIX}/report",
+        json={"text": "shipped the cache", "item_id": "item_1", "close_item": True},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    draft = (await client.get("/v1/standups/draft", headers=headers)).json()
+    assert [line.split(" [")[0] for line in draft["done"]] == ["shipped the cache"]
+    assert draft["doing"] == []
+    assert len(draft["cited_event_ids"]) == 1
+
+
 async def test_replay_rebuilds_projections(services, team, client: httpx.AsyncClient) -> None:  # type: ignore[no-untyped-def]
     await client.post(
         "/v1/events",

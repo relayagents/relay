@@ -59,10 +59,18 @@ async def gather(
         since=now - timedelta(hours=hours), user_id=user_id, limit=1000
     )
     draft = StandupDraft(user_id=user_id)
+    # A report that closed its item already appears under Done through the closure.
+    done_items = {
+        e.payload.item_id
+        for e in events
+        if isinstance(e.payload, ActionItemClosed) and e.payload.resolution == "done"
+    }
     for e in events:
         p = e.payload
         if isinstance(p, ActionItemClosed) and p.resolution == "done":
             draft.done.append(f"{p.note or 'closed ' + p.item_id} [{e.id}]")
+        elif isinstance(p, ReportPosted) and p.item_id in done_items:
+            continue
         elif isinstance(p, ReportPosted):
             draft.doing.append(f"{p.text} [{e.id}]")
         elif isinstance(p, ActionItemUpdated) and p.status == "blocked":
