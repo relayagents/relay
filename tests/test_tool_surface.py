@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import httpx
 import pytest
+import typer
 from click import Context
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from typer.main import get_command
+from typer.testing import CliRunner
 
 from relayagents.cli.main import app as cli_app
 from relayagents.tools import TOOLS
+from relayagents.tools.cli import register_tool_commands
 from relayagents.tools.rest import TOOLS_PREFIX
 from tests.conftest import auth
 
@@ -76,6 +79,29 @@ def test_cli_commands_match_registry() -> None:
         args = [p.name for p in sub.params if p.param_type_name == "argument"]
         assert args == list(spec.positional), spec.name
         Context(sub).get_help()  # renders without error
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_cli_bool_options_can_be_set_either_way(value: bool) -> None:
+    """A bool that defaults to True (request_approval's `wait`) must still be switchable off."""
+    calls: list[dict] = []
+
+    class FakeClient:
+        def call_tool(self, name: str, args: dict) -> dict:
+            calls.append(args)
+            return {}
+
+    app = typer.Typer()
+    register_tool_commands(app, FakeClient)
+    for spec in TOOLS:
+        bools = [n for n, f in spec.input_model.model_fields.items() if f.annotation is bool]
+        if not bools:
+            continue
+        args = [spec.name.replace("_", "-"), *["x"] * len(spec.positional), "--json"]
+        args += [f"--{'' if value else 'no-'}{n.replace('_', '-')}" for n in bools]
+        result = CliRunner().invoke(app, args)
+        assert result.exit_code == 0, (spec.name, result.output)
+        assert all(calls[-1][n] is value for n in bools), (spec.name, calls[-1])
 
 
 async def test_rest_and_mcp_return_the_same_thing(app, client: httpx.AsyncClient, team) -> None:  # type: ignore[no-untyped-def]
