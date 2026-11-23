@@ -13,7 +13,7 @@ two vertical slices. For what comes next, see [roadmap.md](roadmap.md).
 | `relay-ingest` | arq on the `relay:ingest` queue: WhisperX + pyannote. CPU on the node, or GPU elsewhere | `ghcr.io/relayagents/relay-ingest` |
 | `postgres` | Postgres 16 + pgvector. The `events` table is the source of truth | `pgvector/pgvector:pg16` |
 | `redis` | Job queue | `redis:7` |
-| `workspace-mcp` | Google Workspace MCP server with per-user OAuth 2.1 | `ghcr.io/taylorwilsdon/google_workspace_mcp` |
+| `workspace-mcp` | Google Workspace MCP server with per-user OAuth 2.1; opt-in (`COMPOSE_PROFILES=google`) | `ghcr.io/taylorwilsdon/google_workspace_mcp` |
 | `caddy` | TLS for `relay.relayagents.dev` or a tailnet name | `caddy:2` |
 | agent pool | one `relay-hermes-<user>` container per teammate (own volume), plus `relay-sandbox` for headless coding-agent runs | `ghcr.io/relayagents/relay-hermes`, `relay-sandbox` |
 
