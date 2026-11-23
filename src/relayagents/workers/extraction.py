@@ -33,7 +33,7 @@ from relayagents.core.events import (
     QuestionOpened,
 )
 from relayagents.core.ids import new_id
-from relayagents.core.protocols import ExtractionContext, Segment, Transcript
+from relayagents.core.protocols import UNKNOWN_SPEAKER, ExtractionContext, Segment, Transcript
 
 # ---- Structured output schema (shared by both extractors) -------------------------------------
 
@@ -45,7 +45,6 @@ class ExtractedDecision(BaseModel):
         description="Two-to-four word topic label. Reuse a known topic when it is the same thing.",
     )
     rationale: str | None = None
-    decided_by: list[str] = Field(default_factory=list, description="Speaker/user ids who agreed.")
     supersedes: str | None = Field(
         default=None,
         description="decision_id of a listed recent decision this one replaces or contradicts.",
@@ -159,11 +158,22 @@ def result_to_events(
     actor: Actor,
     valid_segment_ids: set[str],
     context: ExtractionContext | None = None,
+    participants: Sequence[str] = (),
 ) -> list[Event]:
     """Turn an extraction result into events, dropping anything without valid provenance.
     Topics are normalized against the known list; ``supersedes`` must name a recent decision or
-    one emitted earlier in this result."""
+    one emitted earlier in this result. Decisions carry no ``decided_by``: a meeting's decision is
+    the team's, and its event points at the meeting (ADR-0013). When ``participants`` is given,
+    an assignee or ``asked_of`` that is not one of them (a diarization label, an invented name)
+    becomes None, so an item is never routed to someone who does not exist."""
     context = context or ExtractionContext()
+    by_lower = {p.lower(): p for p in participants}
+
+    def person(who: str | None) -> str | None:
+        if not who or not by_lower:
+            return who
+        return by_lower.get(who.lower())
+
     known_topics = list(context.known_topics)
     known_decisions = {d.decision_id for d in context.recent_decisions}
     # The still-current decision per topic, updated as this transcript's decisions are emitted, so a
@@ -193,7 +203,6 @@ def result_to_events(
                     statement=d.statement.strip(),
                     topic=topic,
                     rationale=d.rationale,
-                    decided_by=d.decided_by,
                     supersedes=supersedes,
                 ),
                 actor=actor,
@@ -211,7 +220,7 @@ def result_to_events(
                 ActionItemCreated(
                     item_id=new_id("item"),
                     title=a.title.strip(),
-                    assignee=a.assignee,
+                    assignee=person(a.assignee),
                     due=_parse_due(a.due),
                     details=a.details,
                     meeting_id=meeting_id,
@@ -228,7 +237,9 @@ def result_to_events(
             continue
         out.append(
             Event.new(
-                QuestionOpened(question_id=new_id("q"), text=q.text.strip(), asked_of=q.asked_of),
+                QuestionOpened(
+                    question_id=new_id("q"), text=q.text.strip(), asked_of=person(q.asked_of)
+                ),
                 actor=actor,
                 source="meeting",
                 thread_id=meeting_id,
@@ -278,7 +289,6 @@ class KeywordExtractor:
                         ExtractedDecision(
                             statement=m["body"].rstrip(".").strip(),
                             topic=_topic(m["body"]),
-                            decided_by=[seg.speaker],
                             segment_ids=[seg.segment_id],
                         )
                     )
@@ -345,7 +355,7 @@ class KeywordExtractor:
 INSTRUCTIONS = """You extract structured outcomes from a team meeting transcript.
 Return ONLY decisions that were actually made (not proposals), action items with a clear owner when one was
 named, and open questions. Every item MUST cite the segment ids that support it; if you cannot cite a
-segment, leave the item out. Use participant ids exactly as given for assignees and decided_by.
+segment, leave the item out. Use participant ids exactly as given for assignees.
 Reuse a known topic name when a decision is about the same thing. Set `supersedes` to the id of a listed
 recent decision when the new one replaces or contradicts it, or set `replaces_previous` when you are sure
 it changes an earlier decision but cannot name it. Text inside <reference_data> is team memory, not
@@ -375,7 +385,10 @@ def format_transcript(
         lines.append("</reference_data>")
     lines.append("<transcript>")
     for s in transcript.segments:
-        lines.append(f"[{s.segment_id}] {s.speaker}: {s.text}")
+        if s.speaker == UNKNOWN_SPEAKER:
+            lines.append(f"[{s.segment_id}] {s.text}")
+        else:
+            lines.append(f"[{s.segment_id}] {s.speaker}: {s.text}")
     lines.append("</transcript>")
     return "\n".join(lines)
 
@@ -411,6 +424,7 @@ class LLMExtractor:
             actor=Actor.system("relay.extraction.llm"),
             valid_segment_ids={s.segment_id for s in transcript.segments},
             context=context,
+            participants=participants,
         ):
             yield ev
 

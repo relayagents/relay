@@ -171,7 +171,19 @@ class Decision(BaseModel):
     statement: str
     topic: str | None
     rationale: str | None = None
-    decided_by: list[str] = Field(default_factory=list)
+    attribution: str = Field(
+        description="Who the decision belongs to, ready to show: 'Team decision in meeting \"Weekly sync\"' "
+        "for a meeting's decision, else the named deciders or 'Team decision'."
+    )
+    meeting_id: str | None = Field(
+        default=None, description="Meeting the decision was made in; None if a caller published it."
+    )
+    meeting_title: str | None = None
+    decided_by: list[str] = Field(
+        default_factory=list,
+        description="Deciders a caller named when publishing. Always empty for a meeting's "
+        "decision: that is the team's, not one speaker's.",
+    )
     decided_at: datetime
     supersedes: str | None = None
     superseded_by: str | None = None

@@ -25,10 +25,10 @@ from relayagents.core.events import (
 )
 from relayagents.core.ids import new_id
 from relayagents.core.indexing import index_later
-from relayagents.core.models import ActionItemRow
+from relayagents.core.models import ActionItemRow, DecisionRow
 from relayagents.core.permissions import is_forbidden, policy_for
 from relayagents.core.projections import apply as project
-from relayagents.core.projections import list_decisions, list_items
+from relayagents.core.projections import decision_meetings, list_decisions, list_items
 from relayagents.core.protocols import MemoryHit
 from relayagents.core.redact import redact
 from relayagents.core.store import EventStore, parse_since
@@ -304,21 +304,34 @@ async def decisions(ctx: ToolContext, inp: DecisionsInput) -> DecisionsOutput:
         rows = await list_decisions(
             session, topic=inp.topic, since=parse_since(inp.since), limit=inp.limit
         )
-    return DecisionsOutput(
-        decisions=[
-            Decision(
-                id=r.id,
-                statement=r.statement,
-                topic=r.topic,
-                rationale=r.rationale,
-                decided_by=list(r.decided_by),
-                decided_at=r.decided_at,
-                supersedes=r.supersedes,
-                superseded_by=r.superseded_by,
-                source_event_id=r.source_event_id,
-            )
-            for r in rows
-        ]
+        meetings = await decision_meetings(session, [r.source_event_id for r in rows])
+    return DecisionsOutput(decisions=[_decision(r, meetings.get(r.source_event_id)) for r in rows])
+
+
+def _decision(row: DecisionRow, meeting: tuple[str, str | None] | None) -> Decision:
+    """A meeting's decision is credited to the team and names the meeting (ADR-0013). Older
+    events may carry ``decided_by`` guessed from diarization; it is not shown for those."""
+    decided_by = [] if meeting else list(row.decided_by)
+    if meeting:
+        meeting_id, title = meeting
+        attribution = f'Team decision in meeting "{title or meeting_id}"'
+    elif decided_by:
+        attribution = "Decided by " + ", ".join(decided_by)
+    else:
+        attribution = "Team decision"
+    return Decision(
+        id=row.id,
+        statement=row.statement,
+        topic=row.topic,
+        rationale=row.rationale,
+        attribution=attribution,
+        meeting_id=meeting[0] if meeting else None,
+        meeting_title=meeting[1] if meeting else None,
+        decided_by=decided_by,
+        decided_at=row.decided_at,
+        supersedes=row.supersedes,
+        superseded_by=row.superseded_by,
+        source_event_id=row.source_event_id,
     )
 
 
