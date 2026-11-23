@@ -308,17 +308,21 @@ async def decisions(ctx: ToolContext, inp: DecisionsInput) -> DecisionsOutput:
     return DecisionsOutput(decisions=[_decision(r, meetings.get(r.source_event_id)) for r in rows])
 
 
+def _short_line(text: str, limit: int) -> str:
+    return " ".join(text.split()).replace('"', "'")[:limit]
+
+
 def _decision(row: DecisionRow, meeting: tuple[str, str | None] | None) -> Decision:
     """A meeting's decision is credited to the team and names the meeting (ADR-0013). Older
     events may carry ``decided_by`` guessed from diarization; it is not shown for those."""
     decided_by = [] if meeting else list(row.decided_by)
+    # Titles and caller-named deciders are free text: one short line each, so they cannot pose
+    # as more than a name where an agent reads the attribution.
     if meeting:
         meeting_id, title = meeting
-        # The title is free text from the uploader: one short line, so it cannot pose as more.
-        name = " ".join((title or meeting_id).split()).replace('"', "'")[:120]
-        attribution = f'Team decision in meeting "{name}"'
+        attribution = f'Team decision in meeting "{_short_line(title or meeting_id, 120)}"'
     elif decided_by:
-        attribution = "Decided by " + ", ".join(decided_by)
+        attribution = "Decided by " + ", ".join(_short_line(n, 60) for n in decided_by[:10])
     else:
         attribution = "Team decision"
     return Decision(
