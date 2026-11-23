@@ -394,16 +394,26 @@ def format_transcript(
         lines.append("</reference_data>")
     lines.append("<transcript>")
     for s in transcript.segments:
-        # Always a speaker prefix, so text that opens with "ada:" cannot pass as ada speaking.
-        speaker = "(unknown speaker)" if s.speaker == UNKNOWN_SPEAKER else s.speaker
-        lines.append(f"[{s.segment_id}] {speaker}: {s.text}")
+        # Always a speaker prefix, so text that opens with "ada:" cannot pass as ada speaking, and
+        # one line per segment, so text cannot forge another segment or close the transcript tag.
+        speaker = "(unknown speaker)" if s.speaker == UNKNOWN_SPEAKER else _clean(s.speaker, 60)
+        lines.append(f"[{s.segment_id}] {speaker}: {_one_line(s.text)}")
     lines.append("</transcript>")
     return "\n".join(lines)
 
 
+def _one_line(text: str) -> str:
+    """Text enters the prompt as one line with no brackets or angle brackets, so it cannot pose
+    as a segment id or open or close a tag such as <transcript>."""
+    return " ".join(text.split()).translate(_NEUTRAL)
+
+
+_NEUTRAL = str.maketrans({"[": "(", "]": ")", "<": "\u2039", ">": "\u203a"})
+
+
 def _clean(text: str, limit: int) -> str:
-    """Stored text enters the prompt as one short line: no newlines, no bracketed fake segments."""
-    return " ".join(text.split()).replace("[", "(").replace("]", ")")[:limit]
+    """Stored text enters the prompt as one short line (see ``_one_line``)."""
+    return _one_line(text)[:limit]
 
 
 class LLMExtractor:
