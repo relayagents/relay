@@ -385,10 +385,9 @@ def format_transcript(
         lines.append("</reference_data>")
     lines.append("<transcript>")
     for s in transcript.segments:
-        if s.speaker == UNKNOWN_SPEAKER:
-            lines.append(f"[{s.segment_id}] {s.text}")
-        else:
-            lines.append(f"[{s.segment_id}] {s.speaker}: {s.text}")
+        # Always a speaker prefix, so text that opens with "ada:" cannot pass as ada speaking.
+        speaker = "(unknown speaker)" if s.speaker == UNKNOWN_SPEAKER else s.speaker
+        lines.append(f"[{s.segment_id}] {speaker}: {s.text}")
     lines.append("</transcript>")
     return "\n".join(lines)
 

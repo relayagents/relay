@@ -314,7 +314,9 @@ def _decision(row: DecisionRow, meeting: tuple[str, str | None] | None) -> Decis
     decided_by = [] if meeting else list(row.decided_by)
     if meeting:
         meeting_id, title = meeting
-        attribution = f'Team decision in meeting "{title or meeting_id}"'
+        # The title is free text from the uploader: one short line, so it cannot pose as more.
+        name = " ".join((title or meeting_id).split()).replace('"', "'")[:120]
+        attribution = f'Team decision in meeting "{name}"'
     elif decided_by:
         attribution = "Decided by " + ", ".join(decided_by)
     else:
