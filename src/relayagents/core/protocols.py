@@ -32,6 +32,10 @@ RELATED_ID_KEYS: tuple[str, ...] = (
 # ---- Shared DTOs ---------------------------------------------------------------------------
 
 
+UNKNOWN_SPEAKER = "SPEAKER_UNKNOWN"
+"""The speaker of a segment from audio that was not diarized: it names nobody."""
+
+
 class Segment(BaseModel):
     segment_id: str
     speaker: str

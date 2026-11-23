@@ -12,7 +12,7 @@ from typing import Any
 
 import structlog
 
-from relayagents.core.protocols import Segment, Transcript
+from relayagents.core.protocols import UNKNOWN_SPEAKER, Segment, Transcript
 
 log = structlog.get_logger()
 
@@ -79,7 +79,7 @@ class WhisperXTranscriber:
         segments = [
             Segment(
                 segment_id=f"{meeting_id}:seg{i:04d}",
-                speaker=str(s.get("speaker", "SPEAKER_UNKNOWN")),
+                speaker=str(s.get("speaker", UNKNOWN_SPEAKER)),
                 start_s=float(s["start"]),
                 end_s=float(s["end"]),
                 text=s["text"].strip(),

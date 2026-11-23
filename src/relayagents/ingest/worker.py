@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import socket
 from pathlib import Path
 from typing import Any
@@ -71,7 +72,9 @@ async def transcribe_meeting(ctx: dict[str, Any], meeting_id: str) -> str:
         audio = Path(meeting.audio_path)
         participants = list(meeting.participants)
     try:
-        transcript = await ctx["transcriber"].transcribe(audio, meeting_id=meeting_id)
+        transcript = await ctx["transcriber"].transcribe(
+            audio, meeting_id=meeting_id, diarize=ctx.get("diarize", False)
+        )
         transcript.segments = _resolve_speakers(transcript.segments, participants)
         out = audio.with_name("transcript.json")
         out.write_text(transcript.model_dump_json())
@@ -102,9 +105,13 @@ async def _finish(db: Database, meeting_id: str, **values: Any) -> bool:
     return bool(result.rowcount)
 
 
+_DIARIZED_LABEL = re.compile(r"SPEAKER_\d+")
+
+
 def _resolve_speakers(segments: list[Any], participants: list[str]) -> list[Any]:
     """Map SPEAKER_00.. to participants in order of first appearance when counts match.
-    Anything else stays as a diarization label; humans can fix it later via an event."""
+    Anything else keeps its label. Undiarized audio has the single label SPEAKER_UNKNOWN, which
+    names nobody, so it is never mapped, even when the meeting lists one participant."""
     labels: list[str] = []
     for s in segments:
         if s.speaker not in labels:
@@ -112,7 +119,7 @@ def _resolve_speakers(segments: list[Any], participants: list[str]) -> list[Any]
     if (
         participants
         and len(labels) == len(participants)
-        and all(lb.startswith("SPEAKER_") for lb in labels)
+        and all(_DIARIZED_LABEL.fullmatch(lb) for lb in labels)
     ):
         mapping = dict(zip(labels, participants, strict=True))
         for s in segments:
@@ -124,11 +131,15 @@ async def startup(ctx: dict[str, Any]) -> None:
     settings = get_settings()
     ctx["db"] = Database(settings.database_url)
     ctx["transcriber"] = make_transcriber(settings)
+    # Diarization only labels who spoke when; pyannote's models are gated, so it runs only with a
+    # Hugging Face token. Without one, transcripts carry no speaker labels and nothing fails.
+    ctx["diarize"] = bool(settings.hf_token)
     log.info(
         "ingest.started",
         transcriber=settings.transcriber,
         model=settings.whisperx_model,
         device=settings.whisperx_device,
+        diarize=ctx["diarize"],
     )
 
 

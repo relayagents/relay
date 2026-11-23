@@ -66,7 +66,10 @@ class Settings(BaseSettings):
     whisperx_model: str = "large-v3"
     whisperx_device: Literal["auto", "cuda", "cpu"] = "auto"
     whisperx_compute_type: str = "auto"
-    hf_token: str = Field(default="", description="Hugging Face token for pyannote diarization.")
+    hf_token: str = Field(
+        default="",
+        description="Hugging Face token for pyannote diarization. Blank skips diarization.",
+    )
 
     # Slack: one app, Socket Mode, no public URL.
     slack_bot_token: str = ""
