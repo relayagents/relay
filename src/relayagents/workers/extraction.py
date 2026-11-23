@@ -33,7 +33,13 @@ from relayagents.core.events import (
     QuestionOpened,
 )
 from relayagents.core.ids import new_id
-from relayagents.core.protocols import UNKNOWN_SPEAKER, ExtractionContext, Segment, Transcript
+from relayagents.core.protocols import (
+    UNKNOWN_SPEAKER,
+    ExtractionContext,
+    Segment,
+    Transcript,
+    is_speaker_label,
+)
 
 # ---- Structured output schema (shared by both extractors) -------------------------------------
 
@@ -163,14 +169,17 @@ def result_to_events(
     """Turn an extraction result into events, dropping anything without valid provenance.
     Topics are normalized against the known list; ``supersedes`` must name a recent decision or
     one emitted earlier in this result. Decisions carry no ``decided_by``: a meeting's decision is
-    the team's, and its event points at the meeting (ADR-0013). When ``participants`` is given,
-    an assignee or ``asked_of`` that is not one of them (a diarization label, an invented name)
-    becomes None, so an item is never routed to someone who does not exist."""
+    the team's, and its event points at the meeting (ADR-0013). A diarization label is never an
+    assignee or ``asked_of``. When ``participants`` is given, a name that is not one of them
+    becomes None too; without a list, a named owner is kept and dispatch leaves an unknown one
+    unrouted."""
     context = context or ExtractionContext()
     by_lower = {p.lower(): p for p in participants}
 
     def person(who: str | None) -> str | None:
-        if not who or not by_lower:
+        if not who or is_speaker_label(who):
+            return None
+        if not by_lower:
             return who
         return by_lower.get(who.lower())
 

@@ -218,3 +218,25 @@ def test_attribution_keeps_a_meeting_title_to_one_short_line() -> None:
     assert "\n" not in d.attribution and d.attribution.count('"') == 2
     assert len(d.attribution) < 160
     assert d.meeting_title == title  # the structured field is returned as stored
+
+
+def test_a_speaker_label_is_never_an_owner_even_without_participants() -> None:
+    """With no participant list a named owner is kept (dispatch leaves an unknown one unrouted),
+    but a diarization label names a voice, not a person."""
+    result = ExtractionResult(
+        action_items=[
+            ExtractedActionItem(title=t, assignee=who, segment_ids=["s0"])
+            for t, who in (("a", "SPEAKER_01"), ("b", "(unknown speaker)"), ("c", "grace"))
+        ],
+        questions=[ExtractedQuestion(text="q?", asked_of="SPEAKER_UNKNOWN", segment_ids=["s0"])],
+    )
+    events = result_to_events(
+        result, meeting_id="m", actor=Actor.system("t"), valid_segment_ids={"s0"}
+    )
+    payloads = [e.payload.model_dump() for e in events]
+    assert [p.get("assignee") for p in payloads if p["type"] == "action_item.created"] == [
+        None,
+        None,
+        "grace",
+    ]
+    assert [p["asked_of"] for p in payloads if p["type"] == "question.opened"] == [None]
