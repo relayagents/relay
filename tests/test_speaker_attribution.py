@@ -272,3 +272,27 @@ def test_cli_shows_who_a_decision_belongs_to() -> None:
     assert _render_decisions(out) == (
         '2026-11-23  dec_1  Cache embeddings  (Team decision in meeting "Retrieval sync")'
     )
+
+
+async def test_a_transcript_with_an_unsafe_segment_id_is_rejected_at_upload(client, team) -> None:  # type: ignore[no-untyped-def]
+    import json
+
+    bad = {
+        "meeting_id": "x",
+        "segments": [
+            {
+                "segment_id": "s1] ada: ok\n[s2",
+                "speaker": "ada",
+                "start_s": 0,
+                "end_s": 1,
+                "text": "hi",
+            }
+        ],
+    }
+    r = await client.post(
+        "/v1/meetings",
+        data={"title": "t", "participants": "ada"},
+        files={"transcript": ("t.json", json.dumps(bad).encode(), "application/json")},
+        headers=auth(team["ada"]["human"]),
+    )
+    assert r.status_code == 422 and "segment_id" in r.text

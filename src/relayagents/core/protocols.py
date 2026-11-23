@@ -46,7 +46,11 @@ def is_speaker_label(name: str) -> bool:
 
 
 class Segment(BaseModel):
-    segment_id: str
+    segment_id: str = Field(
+        pattern=r"^[A-Za-z0-9_.:-]{1,128}$",
+        description="Cited back by the extractor, so it enters the prompt verbatim: no spaces, "
+        "brackets, or newlines, which could forge another segment.",
+    )
     speaker: str
     start_s: float
     end_s: float
