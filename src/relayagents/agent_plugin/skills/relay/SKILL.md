@@ -46,7 +46,7 @@ own initiative.
 | `my_items` | see your human's open action items; keep the `id` of the one you are working on |
 | `items` | see a teammate's or the team's items |
 | `recall` | search team memory before answering about past work; cite the event ids it returns |
-| `decisions` | get decisions on a topic, with what superseded what |
+| `decisions` | get decisions on a topic, with the meeting each came from and what superseded what |
 | `events` | see what happened recently (`since: "24h"`, `actor: "me"`) |
 | `report` | publish a finished piece of work (below) |
 | `ask` | put a question to a teammate's agent; the teammate is told in Slack |

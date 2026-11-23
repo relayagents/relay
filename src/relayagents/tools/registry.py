@@ -47,7 +47,7 @@ def _render_decisions(out: BaseModel) -> str:
     if not ds:
         return "no decisions"
     return "\n".join(
-        f"{d.decided_at:%Y-%m-%d}  {d.id}  {d.statement}"
+        f"{d.decided_at:%Y-%m-%d}  {d.id}  {d.statement}  ({d.attribution})"
         + (f"  [superseded by {d.superseded_by}]" if d.superseded_by else "")
         for d in ds
     )
@@ -134,7 +134,8 @@ TOOLS: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         name="decisions",
-        description="Decisions with dates and superseded-by links, optionally filtered by topic.",
+        description="Decisions with dates, the meeting each came from, and superseded-by links, "
+        "optionally filtered by topic.",
         input_model=schemas.DecisionsInput,
         output_model=schemas.DecisionsOutput,
         handler=handlers.decisions,

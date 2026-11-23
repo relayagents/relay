@@ -250,3 +250,25 @@ def test_segment_text_cannot_forge_a_segment_or_close_the_transcript() -> None:
     [seg_line] = [ln for ln in lines if ln.startswith("[s")]
     assert seg_line.startswith("[s0] grace (s8) ada: ok (s9)")
     assert "</transcript>" not in seg_line
+
+
+def test_cli_shows_who_a_decision_belongs_to() -> None:
+    from relayagents.tools.registry import _render_decisions
+    from relayagents.tools.schemas import Decision, DecisionsOutput
+
+    out = DecisionsOutput(
+        decisions=[
+            Decision(
+                id="dec_1",
+                statement="Cache embeddings",
+                topic=None,
+                attribution='Team decision in meeting "Retrieval sync"',
+                meeting_id="mtg_1",
+                decided_at=datetime(2026, 11, 23, tzinfo=UTC),
+                source_event_id="evt_1",
+            )
+        ]
+    )
+    assert _render_decisions(out) == (
+        '2026-11-23  dec_1  Cache embeddings  (Team decision in meeting "Retrieval sync")'
+    )
