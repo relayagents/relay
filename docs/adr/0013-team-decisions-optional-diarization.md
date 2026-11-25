@@ -22,7 +22,7 @@ in a meeting is usually the group's, even when one person says it out loud.
 
 1. **Diarization is optional.** The ingest worker labels speakers only when `RELAY_HF_TOKEN` is
    set. Without it, every segment's speaker is `SPEAKER_UNKNOWN`, which is never mapped to a
-   participant and is left out of the extraction prompt.
+   participant and is shown as `(unknown speaker)` in the extraction prompt, never as a name.
 2. **A meeting's decision is a team decision.** The extractor no longer fills `decided_by`. The
    `decision.made` event already carries the meeting as `thread_id`. The `decisions` tool returns
    `meeting_id`, `meeting_title`, and an `attribution` string such as
