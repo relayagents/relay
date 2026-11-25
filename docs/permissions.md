@@ -7,7 +7,7 @@ Relay's rule: **agents act under their human's own tokens, external writes need 
 | Token | Held by | Acts as | Obtained via |
 |---|---|---|---|
 | Relay human token | the person (CLI) | `human:<user>` | `relay login` (Slack-approved device flow) or `relay add-user` |
-| Relay agent token | that person's agent container / coding agent | `agent:<user>.<harness>` | `relay add-user`, `relay setup-agent`, `POST /v1/tokens` |
+| Relay agent token | that person's coding agent, per project | `agent:<user>.<harness>` | `relay setup-agent`, `POST /v1/tokens` |
 | GitHub token | the person's agent environment (`GH_TOKEN`) | the person, via `gh` | the person creates it; Relay never stores it |
 | Google OAuth grant | `workspace-mcp` per user | the person | OAuth consent in the browser; Relay never sees it |
 | Team model key | workers only | Relay extraction/embeddings | `.env` (`TEAM_*_API_KEY`) |
@@ -73,7 +73,7 @@ Relay cannot see or stop them.
 
 ## Who can resolve an approval
 
-Only the human it was requested of (`requested_of`), via the Slack buttons, `relay approvals approve|deny <id>`, or `POST /v1/approvals/{id}/resolve` with a human token. When the Slack app has a bot token but no Socket Mode app token, Relay sends notices without buttons and points to the CLI instead. Agents cannot resolve approvals, and other humans get a 403. The resolver may edit the action text; the edit is recorded in `approval.resolved.edited_action`.
+Only the human it was requested of (`requested_of`), via the Slack buttons, `relay approvals approve|deny <id>`, or `POST /v1/approvals/{id}/resolve` with a human token. When the Slack app has a bot token but no Socket Mode app token, Relay sends notices without buttons and points to the CLI instead. Agents cannot resolve approvals, and other humans get a 403. The resolver may edit the action text; the edit is recorded in `approval.resolved.edited_action`. An approval resolves once: the status flips with a conditional update, so a second click, a retry, or a concurrent resolve changes nothing and acts on nothing. A pending approval past its `expires_at` becomes `expired` when someone tries to resolve it, and cannot be approved after that.
 
 ## Audit log
 

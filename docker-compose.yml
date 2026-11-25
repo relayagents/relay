@@ -98,6 +98,7 @@ services:
     command: ["workers"]
     environment:
       <<: [*relay-env, *team-keys]
+      RELAY_SLACK_BUTTONS: ${SLACK_APP_TOKEN:+true}   # relay-api holds Socket Mode and handles the clicks on what workers post
     volumes:
       - relaydata:/var/lib/relay
       - graphdata:/var/lib/relay/graph     # only used when RELAY_MEMORY_BACKEND=graphiti-kuzu

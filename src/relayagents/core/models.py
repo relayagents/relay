@@ -7,7 +7,7 @@ delivery bookkeeping).
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
@@ -15,6 +15,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -134,10 +135,10 @@ class AgentRow(Base):
 
     __tablename__ = "agents"
 
-    id: Mapped[str] = mapped_column(String(128), primary_key=True)  # e.g. "ada.hermes"
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)  # e.g. "ada.claude-code"
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     name: Mapped[str] = mapped_column(String(128))
-    harness: Mapped[str] = mapped_column(String(32), default="hermes")
+    harness: Mapped[str] = mapped_column(String(32))
     card: Mapped[dict[str, Any]] = mapped_column(JSON)
     push_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(TZDateTime)
@@ -181,6 +182,20 @@ class ApprovalRow(Base):
     created_at: Mapped[datetime] = mapped_column(TZDateTime)
     expires_at: Mapped[datetime | None] = mapped_column(TZDateTime, nullable=True)
     resolved_at: Mapped[datetime | None] = mapped_column(TZDateTime, nullable=True)
+
+
+class StandupClaimRow(Base):
+    """The scheduler's claim on one user's standup for one local day.
+
+    Inserted before the draft or post goes out, so of two overlapping cron ticks only the one
+    whose insert succeeds delivers. Delivery bookkeeping, not derivable from events.
+    """
+
+    __tablename__ = "standup_claims"
+
+    user_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    local_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    claimed_at: Mapped[datetime] = mapped_column(TZDateTime)
 
 
 class MeetingRow(Base):

@@ -282,7 +282,7 @@ async def test_recall_hits_carry_structural_links(client: httpx.AsyncClient, tea
     )
     closed = by_type["action_item.closed"]
     assert (
-        closed["actor"] == "grace.hermes"
+        closed["actor"] == "grace.claude-code"
         and "item_z" in closed["related_ids"]
         and any(r.startswith("evt_") for r in closed["related_ids"])
     )

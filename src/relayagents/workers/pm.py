@@ -1,14 +1,15 @@
-"""The PM job: after extraction, tell the team and hand each assigned item to its owner's agent.
+"""The PM job: after extraction, tell the team, and tell each assignee.
 
-Relay's PM has no superuser credentials. It only (a) posts a summary through the team Slack app
-and (b) sends A2A tasks to the assignees' own agents, which act under their humans' tokens.
+Relay's PM has no superuser credentials and routes to humans (ADR-0011). It (a) posts a summary
+through the team Slack app, (b) DMs each assignee their item, and (c) when the assignee has a
+registered agent, also hands the item to that agent over A2A so it shows up in the agent's inbox.
 """
 
 from __future__ import annotations
 
-import contextlib
 from typing import Any
 
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relayagents.api.a2a_broker import broker
@@ -25,6 +26,7 @@ from relayagents.core.models import MeetingRow
 from relayagents.tools.context import Services
 
 PM_ACTOR = Actor.system("relay.pm")
+log = structlog.get_logger()
 
 
 def summary_text(meeting: MeetingRow, events: list[Event]) -> str:
@@ -68,11 +70,28 @@ def task_text(meeting: MeetingRow, ev: Event) -> str:
     )
 
 
+def item_dm_text(meeting: MeetingRow, p: ActionItemCreated, task_id: str | None) -> str:
+    head = f":clipboard: New action item from *{meeting.title}*:\n> {p.title}\n`{p.item_id}`"
+    if p.due:
+        head += f" · due {p.due.date().isoformat()}"
+    if task_id is not None:
+        return head + f"\nYour agent also has it as task `{task_id}`."
+    return (
+        head
+        + "\nIt shows up in `my_items` the next time your coding agent opens a project connected to Relay."
+    )
+
+
 async def dispatch(
     session: AsyncSession, services: Services, meeting: MeetingRow, events: list[Event]
 ) -> dict[str, Any]:
-    """Post the summary and deliver one A2A task per assigned item. Returns what happened."""
-    out: dict[str, Any] = {"summary_posted": False, "tasks": [], "unrouted": []}
+    """Post the summary, DM every assignee, and hand the item to their agent when one exists."""
+    out: dict[str, Any] = {
+        "summary_posted": False,
+        "tasks": [],
+        "human_only": [],
+        "not_notified": [],
+    }
     chat = services.chat
     channel = services.settings.slack_team_channel
     if chat is not None and channel:
@@ -90,29 +109,33 @@ async def dispatch(
         p = ev.payload
         if not isinstance(p, ActionItemCreated) or not p.assignee:
             continue
+        task_id: str | None = None
         agent = await broker.agent_for_user(session, p.assignee)
-        if agent is None:
-            out["unrouted"].append({"item_id": p.item_id, "assignee": p.assignee})
-            continue
-        msg = Message.from_text(
-            task_text(meeting, ev),
-            context_id=p.item_id,
-            metadata={"item_id": p.item_id, "meeting_id": meeting.id, "source_event_id": ev.id},
-        )
-        task = await broker.send_message(
-            session,
-            from_actor=PM_ACTOR,
-            to_agent=agent.id,
-            message=msg,
-            metadata={"item_id": p.item_id, "kind": "action_item"},
-            surfaced_to=[p.assignee],
-            provenance=Provenance(parent_event_ids=[ev.id]),
-        )
-        out["tasks"].append({"task_id": task.id, "to": agent.id, "item_id": p.item_id})
-        if chat is not None:
-            with contextlib.suppress(Exception):
-                await chat.dm(
-                    p.assignee,
-                    f":clipboard: Relay handed your agent an action item from *{meeting.title}*:\n> {p.title}\n`{p.item_id}` · task `{task.id}`",
-                )
+        if agent is not None:
+            msg = Message.from_text(
+                task_text(meeting, ev),
+                context_id=p.item_id,
+                metadata={"item_id": p.item_id, "meeting_id": meeting.id, "source_event_id": ev.id},
+            )
+            task = await broker.send_message(
+                session,
+                from_actor=PM_ACTOR,
+                to_agent=agent.id,
+                message=msg,
+                metadata={"item_id": p.item_id, "kind": "action_item"},
+                surfaced_to=[p.assignee],
+                provenance=Provenance(parent_event_ids=[ev.id]),
+            )
+            task_id = task.id
+            out["tasks"].append({"task_id": task.id, "to": agent.id, "item_id": p.item_id})
+        else:
+            out["human_only"].append({"item_id": p.item_id, "assignee": p.assignee})
+        try:
+            if chat is None:
+                raise LookupError("Slack is not configured")
+            await chat.dm(p.assignee, item_dm_text(meeting, p, task_id))
+        except Exception as exc:
+            # `my_items` still shows the item; record who was not told so the job result says so
+            log.warning("pm.dm_failed", user=p.assignee, error_type=type(exc).__name__)
+            out["not_notified"].append({"item_id": p.item_id, "assignee": p.assignee})
     return out

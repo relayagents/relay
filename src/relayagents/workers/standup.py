@@ -1,9 +1,11 @@
 """Per-user standup support (vertical slice 2).
 
-The *drafting* happens in the user's own agent (a Hermes cron calls `relay standup draft`, adds
-its judgement, then `relay standup submit`). Relay's part is deterministic: gather the sourced
-facts, render the Block Kit draft with Approve/Edit buttons, and post only on a click (mode=draft)
-or immediately with attribution (mode=auto). Nothing posts when mode=off.
+Relay builds the draft from events and applies the user's posting mode. The workers' per-minute
+cron (`run_due_standups`) does this at each user's `standup_time` (ADR-0011); `relay standup
+draft` / `submit` let a person or their agent do the same by hand. Nothing adds facts to a draft:
+every line cites an event id. Relay renders the Block Kit draft with Approve/Edit buttons and
+posts only on a click (mode=draft) or immediately with attribution (mode=auto). Nothing posts
+when mode=off.
 
 In draft mode the click is a real approval: ``submit`` opens an ``ApprovalRow`` (+
 ``approval.requested``) and the button handlers resolve it (``approval.resolved``) before posting.
@@ -11,12 +13,18 @@ In draft mode the click is a real approval: ``submit`` opens an ``ApprovalRow`` 
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
-from datetime import UTC, datetime, timedelta
+from collections.abc import Callable
+from datetime import UTC, datetime, time, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import structlog
 from pydantic import BaseModel, Field
+from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from relayagents.core import approvals
@@ -24,18 +32,23 @@ from relayagents.core.events import (
     ActionItemClosed,
     ActionItemUpdated,
     Actor,
+    ApprovalRequested,
     Event,
     Provenance,
     ReportPosted,
     StandupPosted,
 )
 from relayagents.core.indexing import index_later
-from relayagents.core.models import UserRow
+from relayagents.core.models import StandupClaimRow, UserRow
 from relayagents.core.projections import list_items
 from relayagents.core.store import EventStore
 from relayagents.tools.context import Services
 
 DRAFT_TTL_S = 12 * 3600
+
+log = structlog.get_logger()
+SCHEDULER = Actor.system("relay.standup")
+CATCH_UP = timedelta(hours=2)  # a standup missed by a busy or restarting worker still goes out
 
 
 class StandupDraft(BaseModel):
@@ -124,9 +137,7 @@ def draft_blocks(draft: StandupDraft, *, approval_id: str | None = None) -> list
         ]
     )
     if draft.questions:
-        text += "\n*Open questions from your agent*\n" + "\n".join(
-            f"• {q}" for q in draft.questions
-        )
+        text += "\n*Open questions*\n" + "\n".join(f"• {q}" for q in draft.questions)
     payload = json.dumps({**draft.model_dump(), "approval_id": approval_id})
     return [
         {
@@ -167,8 +178,17 @@ def render_standup(draft: StandupDraft, display_name: str) -> str:
     )
 
 
-async def submit(services: Services, draft: StandupDraft, *, actor: Actor) -> dict[str, Any]:
-    """Apply the user's posting mode. Emits approval.* and standup.posted as appropriate."""
+async def submit(
+    services: Services,
+    draft: StandupDraft,
+    *,
+    actor: Actor,
+    now: datetime | None = None,
+    on_posted: Callable[[], None] | None = None,
+) -> dict[str, Any]:
+    """Apply the user's posting mode. Emits approval.* and standup.posted as appropriate, stamped
+    with ``now`` (the scheduler's tick) when given. ``on_posted`` runs as soon as the standup is
+    in the team channel, before it is recorded."""
     async with services.db.session() as session:
         user = await session.get(UserRow, draft.user_id)
         if user is None:
@@ -177,7 +197,16 @@ async def submit(services: Services, draft: StandupDraft, *, actor: Actor) -> di
         if mode == "off":
             return {"mode": "off", "posted": False}
         if mode == "auto":
-            ev = await _post(services, session, draft, user, mode="auto", actor=actor)
+            ev = await _post(
+                services,
+                session,
+                draft,
+                user,
+                mode="auto",
+                actor=actor,
+                now=now,
+                on_posted=on_posted,
+            )
             await session.commit()
             return {"mode": "auto", "posted": True, "event_id": ev.id}
         # draft mode: open a real approval (row + event) and DM the draft with buttons.
@@ -190,6 +219,7 @@ async def submit(services: Services, draft: StandupDraft, *, actor: Actor) -> di
             details={"draft": draft.model_dump()},
             ttl_s=DRAFT_TTL_S,
             chat=None,
+            now=now,
         )
         if services.chat is not None:
             if services.chat.supports_actions:
@@ -209,6 +239,121 @@ async def submit(services: Services, draft: StandupDraft, *, actor: Actor) -> di
         return {"mode": "draft", "posted": False, "approval_id": row.id, "event_id": row.event_id}
 
 
+def local_now(user: UserRow, now: datetime) -> datetime:
+    try:
+        tz = ZoneInfo(user.timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        log.warning("standup.bad_timezone", user=user.id, timezone=user.timezone)
+        tz = UTC  # type: ignore[assignment]
+    return now.astimezone(tz)
+
+
+def due_since(user: UserRow, local: datetime) -> timedelta | None:
+    """How long ago today's standup time passed, if it did within the catch-up window. A late or
+    restarted cron still sends it, and a time skipped by a DST jump runs once the clock is past it."""
+    if user.standup_mode == "off":
+        return None
+    try:
+        hour, minute = (int(x) for x in user.standup_time.split(":"))
+        at = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    except ValueError:
+        return None
+    late = local - at  # same tzinfo: wall-clock difference
+    return late if timedelta(0) <= late < CATCH_UP else None
+
+
+async def scheduled_today(session: AsyncSession, user_id: str, local: datetime) -> bool:
+    """True once the scheduler has drafted or posted this user's standup during their local day.
+    Only the scheduler's own records count: a draft approved after midnight, or a standup
+    submitted by hand, does not stand in for the next day's."""
+    start = datetime.combine(local.date(), time(0), tzinfo=local.tzinfo)
+    end = datetime.combine(local.date() + timedelta(days=1), time(0), tzinfo=local.tzinfo)
+    events = await EventStore(session).query(
+        types=["standup.posted", "approval.requested"],
+        actor_id=SCHEDULER.id,
+        since=start.astimezone(UTC),
+        until=end.astimezone(UTC),
+        limit=10_000,  # at most one per user per day
+    )
+    return any(
+        (isinstance(e.payload, StandupPosted) and e.payload.user_id == user_id)
+        or (isinstance(e.payload, ApprovalRequested) and e.payload.requested_of == user_id)
+        for e in events
+    )
+
+
+async def run_due_standups(services: Services, *, now: datetime | None = None) -> list[str]:
+    """Called every minute by the workers: draft and submit for each user whose time has come.
+    Returns the users whose standup went out; one user's failure does not stop the others."""
+    now = now or datetime.now(UTC)
+    async with services.db.session() as session:
+        users = (await session.scalars(select(UserRow).where(UserRow.standup_mode != "off"))).all()
+    done: list[str] = []
+    for user in users:
+        try:
+            local = local_now(user, now)
+            late = due_since(user, local)
+            if late is None:
+                continue
+            if user.standup_mode == "draft" and (services.chat is None or not user.slack_user_id):
+                if late < timedelta(minutes=1):  # say so once, not every minute of the window
+                    log.info("standup.no_dm_target", user=user.id)
+                continue
+            async with services.db.session() as session:
+                if await scheduled_today(session, user.id, local):
+                    continue
+            if not await claim_standup(services, user.id, local, now):
+                continue  # an overlapping tick already has this user's standup for today
+            posted = False
+
+            def mark_posted() -> None:
+                nonlocal posted
+                posted = True
+
+            try:
+                async with services.db.session() as session:
+                    draft = await gather(session, user.id, now=now)
+                await submit(services, draft, actor=SCHEDULER, now=now, on_posted=mark_posted)
+            except BaseException:
+                if posted:
+                    # The team already has it; a retry would post it twice. Keep the claim.
+                    log.error("standup.posted_not_recorded", user=user.id)
+                    raise
+                # Nothing reached the team channel, so the next minute retries; that includes a
+                # CancelledError (worker shutdown, arq timeout), which `except Exception` misses.
+                # Shielded so a second cancel cannot abandon the release halfway.
+                await asyncio.shield(release_standup(services, user.id, local))
+                raise
+        except Exception:
+            log.exception("standup.scheduled_failed", user=user.id)
+            continue
+        done.append(user.id)
+    return done
+
+
+async def claim_standup(services: Services, user_id: str, local: datetime, now: datetime) -> bool:
+    """Claim this user's standup for their local day. Of overlapping ticks, only the one whose
+    insert commits gets True; the primary key turns the others away."""
+    try:
+        async with services.db.session() as session:
+            session.add(StandupClaimRow(user_id=user_id, local_date=local.date(), claimed_at=now))
+            await session.commit()
+    except IntegrityError:
+        return False
+    return True
+
+
+async def release_standup(services: Services, user_id: str, local: datetime) -> None:
+    """Drop a claim whose delivery failed, so a later tick in the catch-up window tries again."""
+    async with services.db.session() as session:
+        await session.execute(
+            delete(StandupClaimRow).where(
+                StandupClaimRow.user_id == user_id, StandupClaimRow.local_date == local.date()
+            )
+        )
+        await session.commit()
+
+
 async def _post(
     services: Services,
     session: AsyncSession,
@@ -217,17 +362,26 @@ async def _post(
     *,
     mode: str,
     actor: Actor,
+    now: datetime | None = None,
+    on_posted: Callable[[], None] | None = None,
 ) -> Event:
+    now = now or datetime.now(UTC)
     channel = services.settings.slack_team_channel
     ref = None
     if services.chat is not None and channel:
         ref = await services.chat.post(
             channel,
             render_standup(draft, user.display_name),
-            attribution=f"posted by {user.display_name}'s agent"
-            if mode == "auto"
-            else f"approved by {user.display_name}",
+            attribution=(
+                f"posted by Relay for {user.display_name}"
+                if mode == "auto" and actor.kind == "system"
+                else f"posted by {user.display_name}'s agent"
+                if mode == "auto"
+                else f"approved by {user.display_name}"
+            ),
         )
+        if on_posted is not None:
+            on_posted()
     ev = Event.new(
         StandupPosted(
             user_id=user.id,
@@ -242,7 +396,8 @@ async def _post(
         ),
         actor=actor,
         source="slack",
-        thread_id=f"standup:{user.id}:{datetime.now(UTC):%Y-%m-%d}",
+        thread_id=f"standup:{user.id}:{local_now(user, now):%Y-%m-%d}",  # the user's own day
+        ts=now,
         provenance=Provenance(parent_event_ids=list(draft.cited_event_ids)),
     )
     await EventStore(session).append(ev)
@@ -287,17 +442,17 @@ async def _approve_and_post(
 ) -> Event | str:
     """Post the draft on the owner's click, or say why not: only the click that resolves the
     approval posts, so a double click, a Slack retry, or an earlier CLI approval cannot post twice,
-    and a draft past its expiry is not posted at all."""
+    and a draft past its expiry is not posted at all. A draft that names an approval with no row
+    (its commit failed after Slack took the DM; a later tick sent a fresh one) posts nothing."""
     if approval_id:
         try:
             row, won = await approvals.resolve_once(
                 session, approval_id=approval_id, decision="approved", resolved_by=user.id
             )
         except KeyError:
-            pass  # no approval row behind this draft: the owner's click is the approval
-        else:
-            if not won:
-                return row.status
+            return "missing"
+        if not won:
+            return row.status
     return await _post(services, session, draft, user, mode="draft", actor=Actor.human(user.id))
 
 
@@ -305,9 +460,14 @@ NOT_POSTED = {
     "approved": (":white_check_mark:", "This standup was already posted."),
     "expired": (
         ":hourglass:",
-        "This draft expired, so it was not posted. Run `relay standup submit` for a fresh one.",
+        "This draft expired. The next one arrives at your standup time, or run `relay standup draft`.",
     ),
     "denied": (":no_entry:", "This draft was declined, so it was not posted."),
+    "missing": (
+        ":warning:",
+        "This draft is no longer valid, so it was not posted. Use your newest draft, or run "
+        "`relay standup draft`.",
+    ),
 }
 
 

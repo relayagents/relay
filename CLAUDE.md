@@ -32,7 +32,7 @@ This repo is **public**. Assume every commit is read by strangers.
 
 ```bash
 uv sync --extra graph                      # Python 3.12 venv with everything, including the optional graph extra
-uv run pytest -q                           # ~100 tests, SQLite, no services needed
+uv run pytest -q                           # ~200 tests, SQLite, no services needed
 uv run ruff check src tests && uv run ruff format --check src tests
 RELAY_DATABASE_URL=sqlite+aiosqlite:///dev.db uv run alembic upgrade head   # migrations apply
 RELAY_DATABASE_URL=sqlite+aiosqlite:///dev.db RELAY_ENVIRONMENT=test uv run relay serve   # API alone at :8000
@@ -88,9 +88,9 @@ src/relayagents/
   api/         FastAPI app factory, auth (tokens), routes/, a2a_broker/, slack/ (Socket Mode)
   workers/     extraction, pm (dispatch), digest, standup, jobs (arq), main
   ingest/      WhisperX transcriber, fixture transcriber, ingest worker
-  connectors/  slack, github (gh CLI), coding_agents, hermes (provisioning), workspace, memory
+  connectors/  slack, github (gh CLI), coding_agents, workspace, memory
   cli/         `relay` (typer) and the HTTP client
-deploy/docker/ relay, ingest, hermes (bridge + skill), sandbox images
+deploy/docker/ relay, ingest, sandbox images
 docs/          architecture, data-model, permissions, protocols, agent-contract, roadmap, adr/
 tests/         one file per concern; conftest builds a three-user team on SQLite
 fixtures/      synthetic transcript and audio only
@@ -117,8 +117,9 @@ fixtures/      synthetic transcript and audio only
 - Don't put `OPENAI_API_KEY` or any model key into `relay-api`'s environment.
 - Don't copy Slack channel history into the event log; Slack is a surface, events are the record
   (ADR-0009). Read Slack at request time if you must.
-- Don't use `hermes chat -q` or assume Hermes speaks MCP; see `docs/roadmap.md` for the pending
-  alignment and `deploy/docker/hermes/` for the bridge that avoids depending on Hermes internals.
+- Don't add a per-user remote agent or a hub agent that acts for people. ADR-0011 says why, and
+  lists what is deferred (notifications to agents, experiment runners) and under what conditions
+  to revisit.
 - Don't pin to `main` of third-party repos in Dockerfiles once we have a tested version.
 - Don't skip the migration when you change `core/models.py`.
 

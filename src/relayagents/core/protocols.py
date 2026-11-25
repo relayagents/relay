@@ -133,17 +133,6 @@ class CodingRun(BaseModel):
     artifacts: list[str] = Field(default_factory=list)
 
 
-class A2ATask(BaseModel):
-    """Minimal broker-side view of an A2A task delivered to a user agent."""
-
-    task_id: str
-    context_id: str
-    from_agent: str
-    to_agent: str
-    text: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
 # ---- Protocols -----------------------------------------------------------------------------
 
 
@@ -255,21 +244,6 @@ class CodingAgent(Protocol):
     async def run(
         self, prompt: str, *, workdir: Path, env: dict[str, str], timeout_s: int = 1800
     ) -> CodingRun: ...
-
-
-@runtime_checkable
-class UserAgent(Protocol):
-    """A per-user agent harness that satisfies docs/agent-contract.md. Reference: Hermes Agent."""
-
-    name: str
-
-    async def provision(self, user_id: str, *, relay_url: str, relay_token: str) -> dict[str, Any]:
-        """Create the runtime (container, config) for this user's agent. Idempotent."""
-        ...
-
-    async def deliver(self, task: A2ATask) -> bool:
-        """Push a task to the agent if it has a push endpoint; return False to leave it in the inbox."""
-        ...
 
 
 @runtime_checkable

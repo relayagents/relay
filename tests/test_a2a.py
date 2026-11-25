@@ -1,19 +1,35 @@
 from __future__ import annotations
 
 import httpx
+import structlog.testing
 
+from relayagents.api.routes.users import AddUserIn, create_user_with_tokens
+from relayagents.core.events import Actor
 from relayagents.tools.rest import TOOLS_PREFIX
 from tests.conftest import auth
 
 
-async def test_agent_cards_are_registered_on_add_user(client: httpx.AsyncClient, team) -> None:  # type: ignore[no-untyped-def]
-    r = await client.get("/a2a/agents/grace.hermes/.well-known/agent-card.json")
+async def test_agents_register_themselves_not_add_user(client: httpx.AsyncClient, team) -> None:  # type: ignore[no-untyped-def]
+    # The fixture registered one agent per user, as `relay setup-agent` does.
+    r = await client.get("/a2a/agents/grace.claude-code/.well-known/agent-card.json")
     assert r.status_code == 200
     card = r.json()
-    assert card["name"] == "grace.hermes"
-    assert card["supportedInterfaces"][0]["url"].endswith("/a2a/agents/grace.hermes")
+    assert card["name"] == "grace.claude-code"
+    assert card["supportedInterfaces"][0]["url"].endswith("/a2a/agents/grace.claude-code")
     listed = (await client.get("/a2a/agents", headers=auth(team["ada"]["human"]))).json()
-    assert {a["agent_id"] for a in listed} == {"ada.hermes", "grace.hermes", "linus.hermes"}
+    assert {a["agent_id"] for a in listed} == {
+        "ada.claude-code",
+        "grace.claude-code",
+        "linus.claude-code",
+    }
+    # add-user mints the human token only (ADR-0011): no agent token, no AgentCard.
+    r = await client.post(
+        "/v1/users", json={"id": "mallory", "display_name": "M"}, headers=auth(team["ada"]["human"])
+    )
+    assert r.status_code == 201, r.text
+    assert set(r.json()) == {"user", "human_token", "relay_url"}
+    listed = (await client.get("/a2a/agents", headers=auth(team["ada"]["human"]))).json()
+    assert not any(a["agent_id"].startswith("mallory.") for a in listed)
 
 
 async def test_ask_flows_through_the_broker(client: httpx.AsyncClient, team, services) -> None:  # type: ignore[no-untyped-def]
@@ -26,10 +42,14 @@ async def test_ask_flows_through_the_broker(client: httpx.AsyncClient, team, ser
     )
     assert r.status_code == 200, r.text
     ask = r.json()
-    assert ask["to_agent"] == "grace.hermes" and ask["state"] == "submitted"
+    assert ask["to_agent"] == "grace.claude-code" and ask["state"] == "submitted"
     # grace's human was told (principle 7)
+    # told as a person: the agent having it too does not mean the agent will act on it (ADR-0011)
     assert any(
-        d["user_id"] == "grace" and "asked your agent" in d["text"] for d in services.chat.dms
+        d["user_id"] == "grace"
+        and "asked you" in d["text"]
+        and "`grace.claude-code` also has it" in d["text"]
+        for d in services.chat.dms
     )
     # grace's agent long-polls its inbox
     inbox = (await client.get("/a2a/inbox", params={"wait": 0}, headers=auth(grace_agent))).json()
@@ -68,18 +88,20 @@ async def test_jsonrpc_message_send(client: httpx.AsyncClient, team) -> None:  #
             "message": {"role": "user", "parts": [{"text": "hello from a generic A2A client"}]}
         },
     }
-    r = await client.post("/a2a/agents/linus.hermes", json=body, headers=auth(team["ada"]["agent"]))
+    r = await client.post(
+        "/a2a/agents/linus.claude-code", json=body, headers=auth(team["ada"]["agent"])
+    )
     assert r.status_code == 200
     task = r.json()["result"]
-    assert task["status"]["state"] == "submitted" and task["metadata"]["to"] == "linus.hermes"
+    assert task["status"]["state"] == "submitted" and task["metadata"]["to"] == "linus.claude-code"
     got = await client.post(
-        "/a2a/agents/linus.hermes",
+        "/a2a/agents/linus.claude-code",
         json={"jsonrpc": "2.0", "id": 2, "method": "tasks/get", "params": {"id": task["id"]}},
         headers=auth(team["ada"]["agent"]),
     )
     assert got.json()["result"]["id"] == task["id"]
     bad = await client.post(
-        "/a2a/agents/nobody.hermes", json=body, headers=auth(team["ada"]["agent"])
+        "/a2a/agents/nobody.claude-code", json=body, headers=auth(team["ada"]["agent"])
     )
     assert "unknown agent" in bad.json()["error"]["message"]
 
@@ -90,4 +112,91 @@ async def test_ask_unknown_user_is_a_clean_error(client: httpx.AsyncClient, team
         json={"user": "nobody", "question": "?"},
         headers=auth(team["ada"]["agent"]),
     )
-    assert r.status_code == 400 and "no agent registered" in r.json()["detail"]
+    assert r.status_code == 400 and "unknown user" in r.json()["detail"]
+
+
+async def test_ask_without_an_agent_reaches_the_human(
+    client: httpx.AsyncClient, team, services
+) -> None:  # type: ignore[no-untyped-def]
+    await create_user_with_tokens(
+        services,
+        AddUserIn(id="nora", display_name="Nora", slack_user_id="UNORA"),
+        issued_by=Actor.system("relay.test"),
+    )
+    r = await client.post(
+        f"{TOOLS_PREFIX}/ask",
+        json={"user": "nora", "question": "Which GPU partition?"},
+        headers=auth(team["ada"]["agent"]),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["to_agent"] is None and body["task_id"] is None
+    assert body["state"] == "human_only" and body["notified"] is True
+    dm = services.chat.dms[-1]
+    assert dm["user_id"] == "nora" and "asked you" in dm["text"] and "GPU partition" in dm["text"]
+    assert "Reply to `ada` directly" in dm["text"]  # Relay does not collect the answer
+    evs = (
+        await client.get(
+            "/v1/events", params={"thread": body["thread_id"]}, headers=auth(team["ada"]["human"])
+        )
+    ).json()
+    assert [e["type"] for e in evs] == ["question.opened"]
+
+
+async def test_ask_records_the_question_even_when_the_dm_fails(  # type: ignore[no-untyped-def]
+    client: httpx.AsyncClient, team, services, monkeypatch
+) -> None:
+    async def boom(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise LookupError("user has no slack_user_id")
+
+    monkeypatch.setattr(services.chat, "dm", boom)
+    with structlog.testing.capture_logs() as logs:
+        r = await client.post(
+            f"{TOOLS_PREFIX}/ask",
+            json={"user": "grace", "question": "Still on it?"},
+            headers=auth(team["ada"]["agent"]),
+        )
+    assert r.status_code == 200, r.text
+    (failed,) = [e for e in logs if e["event"] == "ask.dm_failed"]
+    assert failed["error_type"] == "LookupError"
+    assert "slack_user_id" not in str(failed)  # an SDK error can echo the request payload
+    assert r.json()["notified"] is False  # the caller learns nobody was told in Slack
+    evs = (
+        await client.get(
+            "/v1/events",
+            params={"thread": r.json()["thread_id"]},
+            headers=auth(team["ada"]["human"]),
+        )
+    ).json()
+    assert "question.opened" in [e["type"] for e in evs]
+
+
+def test_ask_render_says_when_nobody_was_told() -> None:
+    from relayagents.tools.registry import TOOLS
+    from relayagents.tools.schemas import AskOutput
+
+    (spec,) = [t for t in TOOLS if t.name == "ask"]
+    out = AskOutput(thread_id="thr_1", question_id="q_1", state="human_only", notified=False)
+    assert "not delivered" in spec.render(out) and "told the person" not in spec.render(out)
+    out = AskOutput(thread_id="thr_1", question_id="q_1", state="human_only", notified=True)
+    assert "told the person in Slack" in spec.render(out)
+
+
+async def test_the_most_recently_seen_agent_gets_the_task(client: httpx.AsyncClient, team) -> None:  # type: ignore[no-untyped-def]
+    # grace adds a second agent; it is the newest, so it is the one asks go to
+    r = await client.post(
+        "/v1/tokens",
+        json={"actor_kind": "agent", "harness": "codex", "label": "agent:codex"},
+        headers=auth(team["grace"]["human"]),
+    )
+    codex = auth(r.json()["token"])
+    r = await client.post(
+        "/a2a/agents", json={"harness": "codex", "card": {"name": "grace.codex"}}, headers=codex
+    )
+    assert r.status_code in (200, 201), r.text
+    r = await client.post(
+        f"{TOOLS_PREFIX}/ask",
+        json={"user": "grace", "question": "Which branch?"},
+        headers=auth(team["ada"]["agent"]),
+    )
+    assert r.json()["to_agent"] == "grace.codex"
