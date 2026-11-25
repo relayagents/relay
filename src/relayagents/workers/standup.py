@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -178,10 +179,16 @@ def render_standup(draft: StandupDraft, display_name: str) -> str:
 
 
 async def submit(
-    services: Services, draft: StandupDraft, *, actor: Actor, now: datetime | None = None
+    services: Services,
+    draft: StandupDraft,
+    *,
+    actor: Actor,
+    now: datetime | None = None,
+    on_posted: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Apply the user's posting mode. Emits approval.* and standup.posted as appropriate, stamped
-    with ``now`` (the scheduler's tick) when given."""
+    with ``now`` (the scheduler's tick) when given. ``on_posted`` runs as soon as the standup is
+    in the team channel, before it is recorded."""
     async with services.db.session() as session:
         user = await session.get(UserRow, draft.user_id)
         if user is None:
@@ -190,7 +197,16 @@ async def submit(
         if mode == "off":
             return {"mode": "off", "posted": False}
         if mode == "auto":
-            ev = await _post(services, session, draft, user, mode="auto", actor=actor, now=now)
+            ev = await _post(
+                services,
+                session,
+                draft,
+                user,
+                mode="auto",
+                actor=actor,
+                now=now,
+                on_posted=on_posted,
+            )
             await session.commit()
             return {"mode": "auto", "posted": True, "event_id": ev.id}
         # draft mode: open a real approval (row + event) and DM the draft with buttons.
@@ -288,14 +304,24 @@ async def run_due_standups(services: Services, *, now: datetime | None = None) -
                     continue
             if not await claim_standup(services, user.id, local, now):
                 continue  # an overlapping tick already has this user's standup for today
+            posted = False
+
+            def mark_posted() -> None:
+                nonlocal posted
+                posted = True
+
             try:
                 async with services.db.session() as session:
                     draft = await gather(session, user.id, now=now)
-                await submit(services, draft, actor=SCHEDULER, now=now)
+                await submit(services, draft, actor=SCHEDULER, now=now, on_posted=mark_posted)
             except BaseException:
-                # Also on CancelledError (worker shutdown, arq timeout): a claim left behind would
-                # skip this user's standup for the rest of their day. Shielded so a second cancel
-                # cannot abandon the release halfway. The next minute retries.
+                if posted:
+                    # The team already has it; a retry would post it twice. Keep the claim.
+                    log.error("standup.posted_not_recorded", user=user.id)
+                    raise
+                # Nothing reached the team channel, so the next minute retries; that includes a
+                # CancelledError (worker shutdown, arq timeout), which `except Exception` misses.
+                # Shielded so a second cancel cannot abandon the release halfway.
                 await asyncio.shield(release_standup(services, user.id, local))
                 raise
         except Exception:
@@ -337,6 +363,7 @@ async def _post(
     mode: str,
     actor: Actor,
     now: datetime | None = None,
+    on_posted: Callable[[], None] | None = None,
 ) -> Event:
     now = now or datetime.now(UTC)
     channel = services.settings.slack_team_channel
@@ -353,6 +380,8 @@ async def _post(
                 else f"approved by {user.display_name}"
             ),
         )
+        if on_posted is not None:
+            on_posted()
     ev = Event.new(
         StandupPosted(
             user_id=user.id,

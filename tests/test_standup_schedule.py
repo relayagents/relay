@@ -312,3 +312,26 @@ async def test_a_cancelled_delivery_releases_the_claim(
     monkeypatch.setattr(chat, "post", post)
     assert await run_due_standups(services, now=DAY.replace(hour=9, minute=1)) == ["linus"]
     assert len([p for p in chat.posts if p["channel"] == "C_TEAM"]) == 1  # type: ignore[attr-defined]
+
+
+async def test_a_failure_after_the_post_keeps_the_claim(
+    services: Services, team, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    # The standup reached the team channel, then recording it failed. Releasing the claim would
+    # let the next tick post the same standup again.
+    from relayagents.workers import standup
+
+    await _set(services, "linus", standup_mode="auto", standup_time="09:00")
+    await _set(services, "ada", standup_mode="off")
+    await _set(services, "grace", standup_mode="off")
+    chat = services.chat
+    assert chat is not None
+
+    async def db_down(*args: Any, **kwargs: Any) -> None:
+        raise ConnectionError("database went away")
+
+    monkeypatch.setattr(standup, "index_later", db_down)
+    assert await run_due_standups(services, now=DAY.replace(hour=9)) == []
+    monkeypatch.undo()
+    assert await run_due_standups(services, now=DAY.replace(hour=9, minute=1)) == []
+    assert len([p for p in chat.posts if p["channel"] == "C_TEAM"]) == 1  # type: ignore[attr-defined]
