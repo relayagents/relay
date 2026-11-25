@@ -13,6 +13,7 @@ In draft mode the click is a real approval: ``submit`` opens an ``ApprovalRow`` 
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 from datetime import UTC, datetime, time, timedelta
@@ -291,8 +292,11 @@ async def run_due_standups(services: Services, *, now: datetime | None = None) -
                 async with services.db.session() as session:
                     draft = await gather(session, user.id, now=now)
                 await submit(services, draft, actor=SCHEDULER, now=now)
-            except Exception:
-                await release_standup(services, user.id, local)  # the next minute retries
+            except BaseException:
+                # Also on CancelledError (worker shutdown, arq timeout): a claim left behind would
+                # skip this user's standup for the rest of their day. Shielded so a second cancel
+                # cannot abandon the release halfway. The next minute retries.
+                await asyncio.shield(release_standup(services, user.id, local))
                 raise
         except Exception:
             log.exception("standup.scheduled_failed", user=user.id)

@@ -281,3 +281,34 @@ async def test_a_failed_delivery_releases_the_claim(
     monkeypatch.setattr(chat, "post", post)
     assert await run_due_standups(services, now=DAY.replace(hour=9, minute=1)) == ["linus"]
     assert len([p for p in chat.posts if p["channel"] == "C_TEAM"]) == 1  # type: ignore[attr-defined]
+
+
+async def test_a_cancelled_delivery_releases_the_claim(
+    services: Services, team, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    # A worker shutdown or an arq timeout cancels the job after the claim committed but before
+    # delivery. CancelledError is not an Exception, and a claim kept by it would skip the user's
+    # standup for the rest of their day.
+    import asyncio
+
+    await _set(services, "linus", standup_mode="auto", standup_time="09:00")
+    await _set(services, "ada", standup_mode="off")
+    await _set(services, "grace", standup_mode="off")
+    chat = services.chat
+    assert chat is not None
+    post = chat.post
+    started = asyncio.Event()
+
+    async def hang(*args: Any, **kwargs: Any) -> Any:
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(chat, "post", hang)
+    tick = asyncio.create_task(run_due_standups(services, now=DAY.replace(hour=9)))
+    await started.wait()
+    tick.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await tick
+    monkeypatch.setattr(chat, "post", post)
+    assert await run_due_standups(services, now=DAY.replace(hour=9, minute=1)) == ["linus"]
+    assert len([p for p in chat.posts if p["channel"] == "C_TEAM"]) == 1  # type: ignore[attr-defined]
