@@ -117,6 +117,14 @@ async def test_embedder_rejects_wrong_dimension() -> None:
         await emb.embed_documents(["x"])
 
 
+async def test_embedder_never_suggests_a_width_settings_would_refuse() -> None:
+    # A 3072-d model: RELAY_EMBEDDING_DIM=3072 is above the 2000 the index (and Settings) allow.
+    emb = PydanticAIEmbedder(TestEmbeddingModel(dimensions=3072), dim=EMBEDDING_DIM)
+    with pytest.raises(ValueError, match="at most 2000") as caught:
+        await emb.embed_query("x")
+    assert "RELAY_EMBEDDING_DIM=3072" not in str(caught.value)
+
+
 async def test_embedder_accepts_the_configured_width() -> None:
     """A local 768-d model works once RELAY_EMBEDDING_DIM says 768 (ADR-0012)."""
     emb = PydanticAIEmbedder(TestEmbeddingModel(dimensions=768), dim=768)

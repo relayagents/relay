@@ -14,6 +14,7 @@ import structlog
 
 from relayagents.core.config import Settings
 from relayagents.core.db import Database
+from relayagents.core.embedding_column import MAX_INDEXED_DIM
 from relayagents.core.events import Event
 from relayagents.core.protocols import Embedder
 from relayagents.core.store import EventStore, flatten_text
@@ -68,13 +69,18 @@ class PydanticAIEmbedder:
         return out
 
     def _check(self, vec: list[float]) -> list[float]:
-        if len(vec) != self.dim:
+        if len(vec) == self.dim:
+            return vec
+        got = f"embedding model {self.model_name!r} returns {len(vec)} dimensions but "
+        if len(vec) > MAX_INDEXED_DIM:  # a width Settings would refuse is no fix to suggest
             raise ValueError(
-                f"embedding model {self.model_name!r} returns {len(vec)} dimensions but "
-                f"RELAY_EMBEDDING_DIM is {self.dim}. Set RELAY_EMBEDDING_DIM={len(vec)} and run "
-                "`relay migrate` (relay-api runs it on start), or pick a model of that width."
+                f"{got}events.embedding can be at most {MAX_INDEXED_DIM} wide. Pick a model of at "
+                f"most {MAX_INDEXED_DIM} dimensions (RELAY_EMBEDDING_DIM is {self.dim})."
             )
-        return vec
+        raise ValueError(
+            f"{got}RELAY_EMBEDDING_DIM is {self.dim}. Set RELAY_EMBEDDING_DIM={len(vec)} and run "
+            "`relay migrate` (relay-api runs it on start), or pick a model of that width."
+        )
 
 
 def make_embedder(settings: Settings) -> PydanticAIEmbedder | None:
