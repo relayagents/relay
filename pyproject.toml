@@ -42,9 +42,10 @@ graph = ["graphiti-core[kuzu]>=0.30"]
 ingest = ["whisperx>=3.4"]
 # Which torch build `ingest` runs on. Pick one alongside `ingest` (`--extra ingest --extra cpu`);
 # they conflict, and each resolves torch from its own PyTorch index (see [tool.uv.sources]).
-# Pinned to the torch that torchcodec (0.7 pairs with torch 2.8) is built for; bump them together.
-cpu = ["torch==2.8.0", "torchaudio==2.8.0", "torchvision==0.23.0"]
-cu128 = ["torch==2.8.0", "torchaudio==2.8.0", "torchvision==0.23.0"]
+# torchcodec (pulled in by pyannote) is built per torch: 0.7 pairs with torch 2.8. Pinned here so a
+# `uv lock --upgrade` cannot move one without the other; bump them together.
+cpu = ["torch==2.8.0", "torchaudio==2.8.0", "torchvision==0.23.0", "torchcodec==0.7.0"]
+cu128 = ["torch==2.8.0", "torchaudio==2.8.0", "torchvision==0.23.0", "torchcodec==0.7.0"]
 
 [project.scripts]
 relay = "relayagents.cli.main:main"
