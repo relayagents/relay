@@ -52,8 +52,10 @@ Update this file when you finish or reprioritize something; it is the handoff be
   (attributed) (#32).
 - The compose stack has run end to end only once, on a laptop (November 2026: localhost, CPU
   ingest, no Slack or model keys): bootstrap, login, a transcript upload, and a recording through
-  WhisperX into events. CI validates `docker compose config` and builds only the `relay` image; the
-  Hermes and sandbox images have never been built (#33).
+  WhisperX into events. CI validates `docker compose config` and builds the `relay` and CPU
+  `relay-ingest` images (the latter checked against `uv.lock`, #38). The Hermes, sandbox, and CUDA
+  ingest images are built only at release (#33). `relay-ingest` is linux/amd64 only until torch
+  moves past 2.8 (torchcodec 0.7 has no Linux arm64 wheel).
 - Hermes and the sandbox's npm CLIs are unpinned until we have versions we tested (#24, #26).
 
 ## Parked
