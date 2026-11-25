@@ -56,7 +56,7 @@ Docker is not required for tests. CI runs the same commands plus the Postgres mi
 - **PR description says what and why**, links the ADR or issue, lists what you tested, and names
   anything you deliberately left out. Use the template.
 - **Converge with the advisory reviewer before requesting a human.** outerloop reviews every PR
-  opened from a branch in this repo (fork PRs are skipped) with `gpt-5.6-terra`, within minutes.
+  opened from a branch in this repo (fork PRs are skipped), within minutes.
   Watching for that round and handling every finding is part of opening a PR, not an optional
   extra. Fix what is right, push, then remove and re-apply the `outerloop:review` label to get a
   fresh round on the new diff. Keep going until a round has no substantive findings, typically

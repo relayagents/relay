@@ -45,8 +45,8 @@ Update this file when you finish or reprioritize something; it is the handoff be
 
 ## Known gaps, accepted for now
 
-- The outerloop advisory reviewer (`.github/workflows/review.yml`) runs hermes on the OpenAI provider
-  with `gpt-5.6-terra` and uses the `OPENAI_REVIEWER_KEY` repository secret (set 2026-09-09).
+- The outerloop advisory reviewer (`.github/workflows/review.yml`) uses the `OPENAI_REVIEWER_KEY`
+  repository secret (set 2026-09-09).
 
 - `ask.thread_id` is caller-chosen (#31); `report --close-item` can close a teammate's item
   (attributed) (#32).
