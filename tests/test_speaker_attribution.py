@@ -347,3 +347,17 @@ def test_a_blank_title_or_decider_never_renders_an_empty_attribution() -> None:
     assert _decision(row([]), ("mtg_1", "  \n ")).attribution == 'Team decision in meeting "mtg_1"'
     assert _decision(row([" ", "ada"]), None).attribution == "Decided by ada"
     assert _decision(row(["  ", "\n"]), None).attribution == "Team decision"
+
+
+async def test_keyword_owner_keeps_the_participants_spelling() -> None:
+    # Participants are user ids as given at upload; "@grace" must route to "Grace", not "grace".
+    transcript = Transcript(
+        meeting_id="m", segments=[_seg(0, "ada", "Action: @grace will write the eval notes.")]
+    )
+    events = [
+        e
+        async for e in KeywordExtractor().extract(
+            transcript, meeting_id="m", participants=["ada", "Grace"]
+        )
+    ]
+    assert [e.payload.assignee for e in events if e.type == "action_item.created"] == ["Grace"]  # type: ignore[attr-defined]

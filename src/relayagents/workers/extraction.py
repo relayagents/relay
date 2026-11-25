@@ -288,7 +288,8 @@ class KeywordExtractor:
     name = "keyword"
 
     def __init__(self, participants: Sequence[str] = ()) -> None:
-        self.participants = {p.lower() for p in participants}
+        # lowercased -> as given, so an owner keeps the participant's own spelling
+        self.participants = {p.lower(): p for p in participants}
 
     def extract_sync(self, transcript: Transcript) -> ExtractionResult:
         result = ExtractionResult()
@@ -333,8 +334,9 @@ class KeywordExtractor:
     def _who(self, who: str | None) -> str | None:
         if not who:
             return None
-        w = who.lower()
-        return w if not self.participants or w in self.participants else None
+        if not self.participants:
+            return who.lower()
+        return self.participants.get(who.strip().lower())
 
     async def extract(
         self,
@@ -344,7 +346,7 @@ class KeywordExtractor:
         participants: Sequence[str],
         context: ExtractionContext | None = None,
     ) -> AsyncIterator[Event]:
-        self.participants = {p.lower() for p in participants}
+        self.participants = {p.lower(): p for p in participants}
         result = self.extract_sync(transcript)
         # Deterministic supersedes: an explicit cue phrase marks "this changes an earlier decision";
         # result_to_events resolves it against the current decision on the same topic.
@@ -356,6 +358,7 @@ class KeywordExtractor:
             actor=Actor.system("relay.extraction.keyword"),
             valid_segment_ids={s.segment_id for s in transcript.segments},
             context=context,
+            participants=participants,
         ):
             yield ev
 
