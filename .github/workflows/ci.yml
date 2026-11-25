@@ -51,4 +51,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: compose config is valid
-        run: cp .env.example .env && docker compose config -q
+        run: |
+          cp .env.example .env
+          docker compose config -q
+          # workspace-mcp sits behind the opt-in profile, so check the file with it switched on too
+          COMPOSE_PROFILES=workspace docker compose config -q
