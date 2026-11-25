@@ -67,6 +67,24 @@ def test_migrate_upgrades_the_database_named_only_in_dotenv(
     assert db_file.exists()
 
 
+def test_migrate_accepts_a_percent_in_the_environment_url(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    # Compose passes RELAY_DATABASE_URL in the environment, and env.py used to set it raw, so a
+    # percent-encoded password failed with ConfigParser's "invalid interpolation syntax".
+    db_dir = tmp_path / "p%40ss"
+    db_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RELAY_DATABASE_URL", f"sqlite+aiosqlite:///{db_dir}/relay.db")
+    reset_settings_cache()
+    try:
+        result = CliRunner().invoke(cli.app, ["migrate"])
+    finally:
+        reset_settings_cache()
+    assert result.exit_code == 0, result.output
+    assert list(tmp_path.rglob("relay.db"))
+
+
 @pytest.mark.parametrize("dim", [0, 2001])
 async def test_width_outside_the_hnsw_limit_is_refused(services: Services, dim: int) -> None:
     with pytest.raises(ValueError, match=r"1\.\.2000"):

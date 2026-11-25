@@ -18,7 +18,8 @@ if config.config_file_name is not None:
 
 url = os.environ.get("RELAY_DATABASE_URL")
 if url:
-    config.set_main_option("sqlalchemy.url", url)
+    # ConfigParser treats % as interpolation, so escape it (percent-encoded passwords).
+    config.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
 
 target_metadata = Base.metadata
 
