@@ -18,7 +18,7 @@ from relayagents.core.events import (
     DecisionMade,
     Event,
 )
-from relayagents.core.models import ActionItemRow, DecisionRow
+from relayagents.core.models import ActionItemRow, DecisionRow, EventRow, MeetingRow
 from relayagents.core.store import EventStore
 
 
@@ -126,6 +126,25 @@ async def list_decisions(
         stmt = stmt.where(DecisionRow.decided_at >= since)
     stmt = stmt.order_by(DecisionRow.decided_at.desc()).limit(limit)
     return list((await session.scalars(stmt)).all())
+
+
+async def decision_meetings(
+    session: AsyncSession, source_event_ids: list[str]
+) -> dict[str, tuple[str, str | None]]:
+    """For each decision event extracted from a meeting: ``(meeting_id, meeting title)``.
+    Decisions a caller published are absent. The title is None if the meeting row is gone."""
+    if not source_event_ids:
+        return {}
+    stmt = (
+        select(EventRow.id, EventRow.thread_id, MeetingRow.title)
+        .outerjoin(MeetingRow, MeetingRow.id == EventRow.thread_id)
+        .where(
+            EventRow.id.in_(source_event_ids),
+            EventRow.source == "meeting",
+            EventRow.thread_id.isnot(None),
+        )
+    )
+    return {eid: (mid, title) for eid, mid, title in (await session.execute(stmt)).all()}
 
 
 async def distinct_topics(session: AsyncSession, *, limit: int = 500) -> list[str]:

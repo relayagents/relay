@@ -241,11 +241,11 @@ class CountingTranscriber:
         self.during = during
         self.calls = 0
 
-    async def transcribe(self, audio: Path, *, meeting_id: str) -> Any:
+    async def transcribe(self, audio: Path, *, meeting_id: str, **kwargs: Any) -> Any:
         self.calls += 1
         if self.during is not None:
             await self.during()
-        return await self.inner.transcribe(audio, meeting_id=meeting_id)
+        return await self.inner.transcribe(audio, meeting_id=meeting_id, **kwargs)
 
 
 async def _audio_meeting(

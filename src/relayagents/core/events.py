@@ -111,7 +111,11 @@ class DecisionMade(Payload):
     statement: str
     topic: str | None = None
     rationale: str | None = None
-    decided_by: list[str] = Field(default_factory=list)
+    decided_by: list[str] = Field(
+        default_factory=list,
+        description="Deciders a caller named. The extractor leaves it empty: a meeting's decision "
+        "is the team's, and the event's thread_id names the meeting (ADR-0013).",
+    )
     supersedes: str | None = Field(default=None, description="decision_id this replaces, if any.")
 
 

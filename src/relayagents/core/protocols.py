@@ -6,6 +6,7 @@ Protocol before implementation: add the method here first, then to the reference
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator, Sequence
 from datetime import datetime
 from pathlib import Path
@@ -32,8 +33,24 @@ RELATED_ID_KEYS: tuple[str, ...] = (
 # ---- Shared DTOs ---------------------------------------------------------------------------
 
 
+UNKNOWN_SPEAKER = "SPEAKER_UNKNOWN"
+"""The speaker of a segment from audio that was not diarized: it names nobody."""
+
+_SPEAKER_LABEL = re.compile(r"SPEAKER_(?:\d+|UNKNOWN)|\(unknown speaker\)", re.I)
+
+
+def is_speaker_label(name: str) -> bool:
+    """True for a diarization label (SPEAKER_00, SPEAKER_UNKNOWN) or the prompt's
+    "(unknown speaker)": a voice, not a person, so never an owner."""
+    return bool(_SPEAKER_LABEL.fullmatch(name.strip()))
+
+
 class Segment(BaseModel):
-    segment_id: str
+    segment_id: str = Field(
+        pattern=r"^[A-Za-z0-9_.:-]{1,128}$",
+        description="Cited back by the extractor, so it enters the prompt verbatim: no spaces, "
+        "brackets, or newlines, which could forge another segment.",
+    )
     speaker: str
     start_s: float
     end_s: float

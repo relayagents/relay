@@ -132,7 +132,7 @@ The same nine operations exist as MCP tools, `relay` subcommands, and `POST /v1/
 | `report <text> [--item-id ID] [--link URL]` | publish what I did as an event (source for standups and item closure) |
 | `ask <user> <question>` | A2A message to a teammate's agent, threaded, surfaced to that human in Slack |
 | `request_approval <action>` | open an approval; blocks until the human resolves it in Slack |
-| `decisions --topic` | decisions with dates and superseded-by links |
+| `decisions --topic` | decisions with dates, the meeting each came from, and superseded-by links |
 | `post <text>` | post to Slack via Relay's app with "posted by X's agent" attribution |
 
 ## Principles
