@@ -4,8 +4,9 @@
 # `outerloop:review` label; silence one PR with `outerloop:no-review`. Docs: outerloop/docs/reviewer.md.
 #
 # Backend: codex with no `model`, so the review runs on the model outerloop pins next to its Codex
-# CLI version (`model` under `[codex]` in outerloop's src/outerloop/harnesses.toml). Model upgrades
-# arrive with outerloop releases and need no change here; no file in this repo names a model.
+# CLI version (`model` under `[codex]` in outerloop's src/outerloop/harnesses.toml). No file in
+# this repo names a model. A newer model still arrives only when we bump outerloop: move both refs
+# below to the newer commit or tag. There is just no model id to edit when we do.
 # Needs the repository secret OPENAI_REVIEWER_KEY (a spend-capped key used only for reviews).
 # Without it every PR gets a visible "could not run" stub, by design.
 name: outerloop-review
