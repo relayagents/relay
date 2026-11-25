@@ -6,6 +6,8 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from sqlalchemy import select
+
 from relayagents.core.events import Actor
 from relayagents.core.models import ApprovalRow, UserRow
 from relayagents.core.store import EventStore
@@ -129,3 +131,54 @@ async def test_a_scheduled_standup_is_threaded_by_the_users_local_date(
     async with services.db.session() as session:
         (ev,) = await EventStore(session).query(types=["standup.posted"])
     assert ev.thread_id == "standup:linus:2026-06-15"
+
+
+async def test_a_draft_whose_approval_never_committed_does_not_post(
+    services: Services, team, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    # Slack accepted the draft DM, then the commit failed: the approval behind its buttons was
+    # rolled back. The next tick sends a fresh draft. Only that one may post; the dead one used
+    # to post as "the owner's click is the approval".
+    chat = services.chat
+    assert chat is not None
+    real_dm = chat.dm
+    calls = 0
+
+    async def dm_then_fail(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        ref = await real_dm(*args, **kwargs)
+        if args[0] == "grace":
+            calls += 1
+        if args[0] == "grace" and calls == 1:
+            raise ConnectionError("database went away after Slack took the DM")
+        return ref
+
+    async with services.db.session() as session:
+        user = await session.get(UserRow, "grace")
+        assert user is not None
+        user.timezone, user.standup_time = "UTC", "09:00"
+        await session.commit()
+    monkeypatch.setattr(chat, "dm", dm_then_fail)
+    for minute in (0, 1):
+        await run_due_standups(services, now=datetime(2026, 6, 15, 9, minute, tzinfo=UTC))
+    grace_dms = [d for d in chat.dms if d["user_id"] == "grace"]  # type: ignore[attr-defined]
+    assert len(grace_dms) == 2
+    async with services.db.session() as session:  # the ticks ran on a past day; click in time
+        for row in await session.scalars(select(ApprovalRow)):
+            row.expires_at = datetime.now(UTC) + timedelta(hours=1)
+        await session.commit()
+
+    def click(dm: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "actions": [{"value": dm["blocks"][1]["elements"][0]["value"]}],
+            "user": {"id": "UGRACE"},
+            "channel": {"id": "DGRACE"},
+            "message": {"ts": "1.000"},
+        }
+
+    client = FakeSlackClient()
+    await post_standup_from_draft(services, click(grace_dms[0]), client)
+    assert await _standups_in_channel(services) == []
+    assert "no longer valid" in client.updates[-1]["text"]
+    await post_standup_from_draft(services, click(grace_dms[1]), client)
+    assert len(await _standups_in_channel(services)) == 1

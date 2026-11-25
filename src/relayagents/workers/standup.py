@@ -442,17 +442,17 @@ async def _approve_and_post(
 ) -> Event | str:
     """Post the draft on the owner's click, or say why not: only the click that resolves the
     approval posts, so a double click, a Slack retry, or an earlier CLI approval cannot post twice,
-    and a draft past its expiry is not posted at all."""
+    and a draft past its expiry is not posted at all. A draft that names an approval with no row
+    (its commit failed after Slack took the DM; a later tick sent a fresh one) posts nothing."""
     if approval_id:
         try:
             row, won = await approvals.resolve_once(
                 session, approval_id=approval_id, decision="approved", resolved_by=user.id
             )
         except KeyError:
-            pass  # no approval row behind this draft: the owner's click is the approval
-        else:
-            if not won:
-                return row.status
+            return "missing"
+        if not won:
+            return row.status
     return await _post(services, session, draft, user, mode="draft", actor=Actor.human(user.id))
 
 
@@ -463,6 +463,11 @@ NOT_POSTED = {
         "This draft expired. The next one arrives at your standup time, or run `relay standup draft`.",
     ),
     "denied": (":no_entry:", "This draft was declined, so it was not posted."),
+    "missing": (
+        ":warning:",
+        "This draft is no longer valid, so it was not posted. Use your newest draft, or run "
+        "`relay standup draft`.",
+    ),
 }
 
 
