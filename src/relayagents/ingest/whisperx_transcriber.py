@@ -79,7 +79,8 @@ class WhisperXTranscriber:
         segments = [
             Segment(
                 segment_id=f"{meeting_id}:seg{i:04d}",
-                speaker=str(s.get("speaker", UNKNOWN_SPEAKER)),
+                # "speaker": None means pyannote left the segment unassigned
+                speaker=str(s.get("speaker") or UNKNOWN_SPEAKER),
                 start_s=float(s["start"]),
                 end_s=float(s["end"]),
                 text=s["text"].strip(),

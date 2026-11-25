@@ -69,3 +69,16 @@ async def test_hf_token_still_diarizes(fake_whisperx: list[str], tmp_path: Path)
     out = await t.transcribe(tmp_path / "a.wav", meeting_id="mtg_1")
     assert out.segments[0].speaker == "SPEAKER_00"
     assert fake_whisperx == ["token=hf_x", "diarize"]
+
+
+async def test_a_segment_diarization_left_unassigned_is_unknown(
+    fake_whisperx: list[str], tmp_path: Path
+) -> None:
+    # pyannote can leave a segment with "speaker": None; that is not a speaker named "None".
+    wx = sys.modules["whisperx"]
+    wx.assign_word_speakers = lambda diarized, result: {  # type: ignore[attr-defined]
+        "segments": [{**s, "speaker": None} for s in result["segments"]]
+    }
+    t = WhisperXTranscriber(model="small", device="cpu", compute_type="int8", hf_token="hf_x")
+    out = await t.transcribe(tmp_path / "a.wav", meeting_id="mtg_1")
+    assert out.segments[0].speaker == "SPEAKER_UNKNOWN"
