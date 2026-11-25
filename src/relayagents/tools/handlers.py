@@ -315,12 +315,13 @@ def _short_line(text: str, limit: int) -> str:
 def _decision(row: DecisionRow, meeting: tuple[str, str | None] | None) -> Decision:
     """A meeting's decision is credited to the team and names the meeting (ADR-0013). Older
     events may carry ``decided_by`` guessed from diarization; it is not shown for those."""
-    decided_by = [] if meeting else list(row.decided_by)
+    decided_by = [] if meeting else [n for n in row.decided_by if n.strip()]
     # Titles and caller-named deciders are free text: one short line each, so they cannot pose
     # as more than a name where an agent reads the attribution.
     if meeting:
         meeting_id, title = meeting
-        attribution = f'Team decision in meeting "{_short_line(title or meeting_id, 120)}"'
+        name = _short_line(title or "", 120) or _short_line(meeting_id, 120)
+        attribution = f'Team decision in meeting "{name}"'
     elif decided_by:
         attribution = "Decided by " + ", ".join(_short_line(n, 60) for n in decided_by[:10])
     else:

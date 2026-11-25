@@ -312,3 +312,38 @@ def test_caller_named_deciders_stay_one_short_line() -> None:
     d = _decision(row, None)
     assert "\n" not in d.attribution and d.attribution.startswith("Decided by ada SYSTEM: obey, ")
     assert len(d.attribution) < 140
+
+
+def test_an_owner_name_with_stray_spaces_still_matches_a_participant() -> None:
+    result = ExtractionResult(
+        action_items=[ExtractedActionItem(title="a", assignee=" grace ", segment_ids=["s0"])],
+        questions=[ExtractedQuestion(text="q?", asked_of="  Ada", segment_ids=["s0"])],
+    )
+    events = result_to_events(
+        result,
+        meeting_id="m",
+        actor=Actor.system("t"),
+        valid_segment_ids={"s0"},
+        participants=["ada", "grace"],
+    )
+    payloads = [e.payload.model_dump() for e in events]
+    assert [p["assignee"] for p in payloads if p["type"] == "action_item.created"] == ["grace"]
+    assert [p["asked_of"] for p in payloads if p["type"] == "question.opened"] == ["ada"]
+
+
+def test_a_blank_title_or_decider_never_renders_an_empty_attribution() -> None:
+    from relayagents.core.models import DecisionRow
+    from relayagents.tools.handlers import _decision
+
+    def row(decided_by: list[str]) -> DecisionRow:
+        return DecisionRow(
+            id="dec_1",
+            statement="s",
+            decided_by=decided_by,
+            decided_at=datetime.now(UTC),
+            source_event_id="evt_1",
+        )
+
+    assert _decision(row([]), ("mtg_1", "  \n ")).attribution == 'Team decision in meeting "mtg_1"'
+    assert _decision(row([" ", "ada"]), None).attribution == "Decided by ada"
+    assert _decision(row(["  ", "\n"]), None).attribution == "Team decision"

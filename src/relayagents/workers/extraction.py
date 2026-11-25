@@ -177,6 +177,7 @@ def result_to_events(
     by_lower = {p.lower(): p for p in participants}
 
     def person(who: str | None) -> str | None:
+        who = (who or "").strip()
         if not who or is_speaker_label(who):
             return None
         if not by_lower:
